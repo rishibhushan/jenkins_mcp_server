@@ -1,13 +1,14 @@
 {
   "name": "jenkins-mcp-server-wrapper",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "bin": {
     "jenkins-mcp-server": "cli.js"
   },
-  "preferGlobal": false,
   "files": [
     "cli.js",
-    "src/"
+    "requirements.txt",
+    "src/",
+    "wheels/"
   ],
   "license": "MIT"
 }
