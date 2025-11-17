@@ -1,14 +1,23 @@
 {
-  "name": "jenkins-mcp-server-wrapper",
-  "version": "0.1.0",
+  "name": "jenkins-mcp-server",
+  "version": "1.0.0",
+  "description": "Jenkins MCP Server with Python backend",
   "bin": {
-    "jenkins-mcp-server": "cli.js"
+    "jenkins-mcp-server": "./bin/jenkins-mcp.js"
   },
   "files": [
-    "cli.js",
-    "requirements.txt",
+    "bin/",
     "src/",
-    "wheels/"
+    "requirements.txt",
+    "README.md"
   ],
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "keywords": ["mcp", "jenkins", "ai", "automation"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rishibhushan/jenkins_mcp_server.git"
+  },
   "license": "MIT"
 }
