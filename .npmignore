@@ -1,0 +1,9 @@
+.venv/
+.npx_venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.github/
+tests/
+*.log
