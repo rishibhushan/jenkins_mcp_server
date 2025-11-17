@@ -17,7 +17,7 @@
   "keywords": ["mcp", "jenkins", "ai", "automation"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/rishibhushan/jenkins_mcp_server.git"
+      "url": "https://github.com/rishibhushan/jenkins_mcp_server.git"
   },
   "license": "MIT"
 }
