@@ -6,7 +6,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from pydantic import AnyUrl
 
-from config import jenkins_settings
+from .config import jenkins_settings
 from .jenkins_client import get_jenkins_client
 
 server = Server("jenkins-mcp-server")
