@@ -1,550 +1,516 @@
-from typing import Dict, List, Optional, Any
+"""
+Jenkins MCP Server Client Module
 
-import requests
+Provides a clean interface to Jenkins API operations with automatic fallback
+between python-jenkins library and direct REST API calls.
+"""
+
+import logging
+import time
+import xml.etree.ElementTree as ET
+from typing import Any, Dict, List, Optional
+
 import jenkins
+import requests
+import urllib3
 from requests.auth import HTTPBasicAuth
 
-from .config import jenkins_settings
+from .config import JenkinsSettings, get_default_settings
+
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+class JenkinsConnectionError(Exception):
+    """Raised when unable to connect to Jenkins"""
+    pass
 
 
 class JenkinsClient:
-    """Client for interacting with Jenkins API."""
+    """
+    Client for interacting with Jenkins API.
 
-    def __init__(self):
-        """Initialize the Jenkins client using configuration settings."""
-        try:
-            # Disable SSL verification warnings
-            import urllib3
-            urllib3.disable_warnings()
+    Supports both python-jenkins library and direct REST API calls
+    with automatic fallback for reliability.
+    """
 
-            if jenkins_settings.username and jenkins_settings.token:
-                print(f"Using API token authentication for user {jenkins_settings.username}")
-                self.auth = HTTPBasicAuth(jenkins_settings.username, jenkins_settings.token)
-                self.base_url = jenkins_settings.jenkins_url.rstrip('/')
-
-                # Test connection
-                print("\nTesting connection with direct request...")
-                response = requests.get(f"{self.base_url}/api/json",
-                                        auth=self.auth,
-                                        verify=False)
-                print(f"Direct request status: {response.status_code}")
-
-                if response.ok:
-                    print("Direct API call successful!")
-                    data = response.json()
-                    print(f"Server version: {data.get('_class', 'unknown')}")
-
-                    # Store the initial jobs data
-                    self._jobs = data.get('jobs', [])
-                    print(f"Found {len(self._jobs)} jobs:")
-                    # for job in self._jobs:
-                    #     print(f"- {job['name']} ({job.get('color', 'unknown')})")
-                else:
-                    print(f"Direct API call failed: {response.text}")
-                    raise Exception("Failed to connect to Jenkins")
-            else:
-                raise ValueError("Username and token are required")
-
-        except Exception as e:
-            print(f"\nError connecting to Jenkins: {str(e)}")
-            print("\nPlease check:")
-            print(f"1. Jenkins server is running at {jenkins_settings.jenkins_url}")
-            print("2. Your credentials in .env file are correct")
-            print("3. You have proper permissions in Jenkins")
-            import traceback
-            traceback.print_exc()
-            raise
-
-    def get_jobs(self) -> List[Dict[str, Any]]:
-        """Get a list of all Jenkins jobs (prefer python-jenkins)."""
-        try:
-            server = self._make_jenkins_server()
-            # python-jenkins returns a list of jobs with 'name' and 'url'
-            jobs = server.get_jobs()
-            return jobs
-        except Exception:
-            # fallback to requests-based implementation
-            try:
-                response = requests.get(f"{self.base_url}/api/json",
-                                        auth=self.auth,
-                                        verify=False)
-                response.raise_for_status()
-                return response.json().get('jobs', [])
-            except Exception as e:
-                print(f"Error getting Jenkins jobs: {str(e)}")
-                return []
-
-    def get_job_info(self, job_name: str) -> Dict[str, Any]:
-        """Get detailed information about a specific job (prefer python-jenkins)."""
-        try:
-            server = self._make_jenkins_server()
-            return server.get_job_info(job_name)
-        except Exception:
-            try:
-                response = requests.get(f"{self.base_url}/job/{job_name}/api/json",
-                                        auth=self.auth,
-                                        verify=False)
-                response.raise_for_status()
-                return response.json()
-            except Exception as e:
-                print(f"Error getting job info for {job_name}: {str(e)}")
-                raise
-
-    def get_build_info(self, job_name: str, build_number: int) -> Dict[str, Any]:
-        """Get information about a specific build (prefer python-jenkins)."""
-        try:
-            server = self._make_jenkins_server()
-            return server.get_build_info(job_name, build_number)
-        except Exception:
-            try:
-                response = requests.get(f"{self.base_url}/job/{job_name}/{build_number}/api/json",
-                                        auth=self.auth,
-                                        verify=False)
-                response.raise_for_status()
-                return response.json()
-            except Exception as e:
-                print(f"Error getting build info for {job_name} #{build_number}: {str(e)}")
-                raise
-
-    def get_build_console_output(self, job_name: str, build_number: int) -> str:
-        """Get console output from a build (prefer python-jenkins)."""
-        try:
-            server = self._make_jenkins_server()
-            return server.get_build_console_output(job_name, build_number)
-        except Exception:
-            try:
-                response = requests.get(f"{self.base_url}/job/{job_name}/{build_number}/consoleText",
-                                        auth=self.auth,
-                                        verify=False)
-                response.raise_for_status()
-                return response.text
-            except Exception as e:
-                print(f"Error getting build console for {job_name} #{build_number}: {str(e)}")
-                raise
-
-    def build_job(self, job_name: str, parameters: Optional[Dict[str, Any]] = None, wait_for_build: bool = True,
-                  timeout: int = 30, poll_interval: float = 1.0) -> Dict[str, Optional[int]]:
+    def __init__(self, settings: Optional[JenkinsSettings] = None):
         """
-        Trigger a build for a job and return both queue_id and build_number (if available).
+        Initialize Jenkins client.
 
-        Parameters:
-        - job_name: Jenkins job name
-        - parameters: optional build parameters dict
-        - wait_for_build: if True, poll the queue until the build starts and return the build number
-        - timeout: maximum seconds to wait when waiting for build_number
-        - poll_interval: seconds between poll attempts
+        Args:
+            settings: JenkinsSettings instance. If None, uses default settings.
 
-        Returns a dict: { "queue_id": int or None, "build_number": int or None }
+        Raises:
+            JenkinsConnectionError: If unable to connect to Jenkins
+            ValueError: If required settings are missing
         """
+        self.settings = settings or get_default_settings()
+
+        # Validate required settings
+        if not self.settings.is_configured:
+            raise ValueError(
+                "Jenkins settings incomplete. Required: url, username, and (token or password)"
+            )
+
+        self.base_url = self.settings.url
+        username, auth_value = self.settings.get_credentials()
+        self.auth = HTTPBasicAuth(username, auth_value)
+
+        # Cache for python-jenkins server instance
+        self._server: Optional[jenkins.Jenkins] = None
+
+        # Test connection
+        self._test_connection()
+
+    def _test_connection(self) -> None:
+        """Test connection to Jenkins server"""
         try:
-            server = self._make_jenkins_server()
-            # python-jenkins returns queue id when scheduling a build
-            if parameters:
-                q = server.build_job(job_name, parameters)
-            else:
-                q = server.build_job(job_name)
-            queue_id = int(q) if q is not None else None
-
-            build_number = None
-            if wait_for_build and queue_id is not None:
-                # Poll until queue item has an 'executable' -> contains build number
-                elapsed = 0.0
-                while elapsed < timeout:
-                    try:
-                        item = server.get_queue_item(queue_id)
-                        if item is None:
-                            # Sleep and continue if item not present yet
-                            import time
-                            time.sleep(poll_interval)
-                            elapsed += poll_interval
-                            continue
-                        if 'executable' in item and item['executable']:
-                            build_number = int(item['executable']['number'])
-                            break
-                    except Exception:
-                        # If python-jenkins fails to fetch queue item, try fallback via requests
-                        try:
-                            import time
-                            resp = requests.get(f"{self.base_url}/queue/item/{queue_id}/api/json", auth=self.auth,
-                                                verify=False)
-                            if resp.ok:
-                                j = resp.json()
-                                if 'executable' in j and j['executable']:
-                                    build_number = int(j['executable']['number'])
-                                    break
-                        except Exception:
-                            pass
-                    import time
-                    time.sleep(poll_interval)
-                    elapsed += poll_interval
-
-            return {"queue_id": queue_id, "build_number": build_number}
-        except Exception:
-            # fallback to requests-based implementation
-            try:
-                url = f"{self.base_url}/job/{job_name}/build"
-                if parameters:
-                    url = f"{self.base_url}/job/{job_name}/buildWithParameters"
-                response = requests.post(url,
-                                         auth=self.auth,
-                                         params=parameters,
-                                         verify=False)
-                response.raise_for_status()
-                location = response.headers.get('Location', '') or response.headers.get('location', '')
-                queue_id = None
-                if location:
-                    # Location header often contains /queue/item/<id>/ or /queue/<id>/
-                    parts = location.rstrip('/').split('/')
-                    for p in reversed(parts):
-                        if p.isdigit():
-                            queue_id = int(p)
-                            break
-
-                build_number = None
-                if wait_for_build and queue_id is not None:
-                    elapsed = 0.0
-                    import time
-                    while elapsed < timeout:
-                        try:
-                            resp = requests.get(f"{self.base_url}/queue/item/{queue_id}/api/json", auth=self.auth,
-                                                verify=False)
-                            if resp.ok:
-                                j = resp.json()
-                                if 'executable' in j and j['executable']:
-                                    build_number = int(j['executable']['number'])
-                                    break
-                        except Exception:
-                            pass
-                        time.sleep(poll_interval)
-                        elapsed += poll_interval
-
-                return {"queue_id": queue_id, "build_number": build_number}
-            except Exception as e:
-                print(f"Error triggering build for {job_name}: {str(e)}")
-                raise
-
-    def stop_build(self, job_name: str, build_number: int) -> None:
-        """Stop a running build."""
-        try:
-            response = requests.post(f"{self.base_url}/job/{job_name}/{build_number}/stop",
-                                     auth=self.auth,
-                                     verify=False)
+            response = requests.get(
+                f"{self.base_url}/api/json",
+                auth=self.auth,
+                verify=False,
+                timeout=10
+            )
             response.raise_for_status()
-        except Exception as e:
-            print(f"Error stopping build {job_name} #{build_number}: {str(e)}")
-            raise
 
-    def get_queue_info(self) -> List[Dict[str, Any]]:
-        """Get information about the queue."""
-        try:
-            response = requests.get(f"{self.base_url}/queue/api/json",
-                                    auth=self.auth,
-                                    verify=False)
-            response.raise_for_status()
-            return response.json().get('items', [])
-        except Exception as e:
-            print(f"Error getting queue info: {str(e)}")
-            return []
+            data = response.json()
+            logger.info(f"Connected to Jenkins: {self.base_url}")
+            logger.info(f"Jenkins version: {data.get('_class', 'unknown')}")
+            logger.debug(f"Found {len(data.get('jobs', []))} jobs")
 
-    def get_node_info(self, node_name: str) -> Dict[str, Any]:
-        """Get information about a specific node."""
-        try:
-            response = requests.get(f"{self.base_url}/computer/{node_name}/api/json",
-                                    auth=self.auth,
-                                    verify=False)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            print(f"Error getting node info for {node_name}: {str(e)}")
-            raise
+        except requests.RequestException as e:
+            raise JenkinsConnectionError(
+                f"Failed to connect to Jenkins at {self.base_url}: {e}"
+            ) from e
 
-    def get_nodes(self) -> List[Dict[str, str]]:
-        """Get a list of all nodes."""
-        try:
-            response = requests.get(f"{self.base_url}/computer/api/json",
-                                    auth=self.auth,
-                                    verify=False)
-            response.raise_for_status()
-            return response.json().get('computer', [])
-        except Exception as e:
-            print(f"Error getting nodes: {str(e)}")
-            return []
-
-    # ----------------------------------------------------
-    # --- Job Management & Configuration methods added ---
-    # ----------------------------------------------------
-
-    def create_job(self, job_name: str, config_xml: str) -> bool:
-        """Create a new Jenkins job with given config XML (prefer python-jenkins)."""
-        try:
-            server = self._make_jenkins_server()
-            server.create_job(job_name, config_xml)
-            # Ensure job saved/configured
-            server.reconfig_job(job_name, config_xml)
-            return True
-        except Exception:
-            try:
-                headers = {"Content-Type": "application/xml"}
-                params = {"name": job_name}
-                response = requests.post(f"{self.base_url}/createItem", params=params,
-                                         data=config_xml, headers=headers, auth=self.auth, verify=False)
-                response.raise_for_status()
-                return True
-            except Exception as e:
-                print(f"Error creating job {job_name}: {e}")
-                raise
-
-    def create_job_from_copy(self, new_job_name: str, source_job_name: str) -> bool:
-        """Create a new Jenkins job by copying an existing job."""
-
-        try:
-            # Extract username and password from self.auth
-            # Assuming self.auth is HTTPBasicAuth(username, password)
-            if hasattr(self.auth, 'username') and hasattr(self.auth, 'password'):
-                username = self.auth.username
-                password = self.auth.password
-            elif isinstance(self.auth, tuple):
-                # If self.auth is a tuple (username, password)
-                username, password = self.auth
-            else:
-                raise ValueError("Unable to extract credentials from self.auth")
-
-            # Create Jenkins server connection
-            server = jenkins.Jenkins(
+    @property
+    def server(self) -> jenkins.Jenkins:
+        """Get or create python-jenkins server instance (lazy initialization)"""
+        if self._server is None:
+            username, password = self.settings.get_credentials()
+            self._server = jenkins.Jenkins(
                 self.base_url,
                 username=username,
                 password=password
             )
+        return self._server
 
-            # Get source config
-            config_xml = server.get_job_config(source_job_name)
-
-            # Fix the uno-choice plugin references
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(config_xml)
-
-            # Update projectName and projectFullName references
-            for elem in root.iter():
-                if elem.tag in ['projectName', 'projectFullName']:
-                    if elem.text == source_job_name:
-                        elem.text = new_job_name
-
-            # Convert back to string
-            fixed_xml = ET.tostring(root, encoding='unicode', method='xml')
-
-            # Create new job with fixed config
-            server.create_job(new_job_name, fixed_xml)
-
-            print(f"Successfully created job: {new_job_name}")
-            return True
-
-        except Exception as e:
-            print(f"Failed to create job from copy: {e}")
-            raise
-
-    def create_job_from_dict(self, job_name: str, config_data: dict, root_tag: str = 'project') -> bool:
-        """Create a new Jenkins job by constructing a simple XML from a dict.
-
-        Parameters
-        - job_name: name of the new job
-        - config_data: a dict containing the desired XML structure under `root_tag`
-        - root_tag: top-level element name for the Jenkins job XML (default: 'project')
-
-        Note: This helper builds basic XML. Complex Jenkins job configurations
-        may not be correctly represented by an automatic conversion. Prefer
-        using `create_job` with full `config_xml` or `create_job_from_copy`.
+    def _api_call(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """
-        try:
-            config_xml = self._dict_to_xml(root_tag, config_data)
-            return self.create_job(job_name, config_xml)
-        except Exception as e:
-            print(f"Error creating job {job_name} from dict: {e}")
-            raise
+        Make a direct REST API call to Jenkins.
 
-    def _dict_to_xml(self, root_tag: str, data: dict) -> str:
-        """Convert a simple dict into an XML string with the given root tag.
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            endpoint: API endpoint (e.g., '/job/myjob/api/json')
+            **kwargs: Additional arguments for requests
 
-        This is a lightweight helper intended for basic use-cases. Jenkins
-        job config XML is complex; for full control prefer providing
-        `config_xml` directly or copying an existing job.
+        Returns:
+            requests.Response object
         """
-        try:
-            from xml.etree.ElementTree import Element, tostring
-            def _build_elem(parent, obj):
-                if isinstance(obj, dict):
-                    for k, v in obj.items():
-                        child = Element(k)
-                        parent.append(child)
-                        _build_elem(child, v)
-                elif isinstance(obj, list):
-                    for item in obj:
-                        item_el = Element('item')
-                        parent.append(item_el)
-                        _build_elem(item_el, item)
-                else:
-                    parent.text = str(obj)
+        url = f"{self.base_url}{endpoint}"
+        kwargs.setdefault('auth', self.auth)
+        kwargs.setdefault('verify', False)
+        kwargs.setdefault('timeout', 30)
 
-            root = Element(root_tag)
-            _build_elem(root, data)
-            # tostring returns bytes in py3; decode to str
-            xml_bytes = tostring(root, encoding='utf-8')
-            return xml_bytes.decode('utf-8')
+        response = requests.request(method, url, **kwargs)
+        response.raise_for_status()
+        return response
+
+    # ==================== Job Information ====================
+
+    def get_jobs(self) -> List[Dict[str, Any]]:
+        """Get list of all Jenkins jobs"""
+        try:
+            return self.server.get_jobs()
         except Exception as e:
-            print(f"Error converting dict to XML: {e}")
-            raise
+            logger.debug(f"python-jenkins failed, using REST API: {e}")
+            response = self._api_call('GET', '/api/json')
+            return response.json().get('jobs', [])
 
-    def delete_job(self, job_name: str) -> bool:
-        """Delete an existing Jenkins job (prefer python-jenkins)."""
+    def get_job_info(self, job_name: str) -> Dict[str, Any]:
+        """Get detailed information about a specific job"""
         try:
-            server = self._make_jenkins_server()
-            server.delete_job(job_name)
-            return True
-        except Exception:
-            try:
-                response = requests.post(f"{self.base_url}/job/{job_name}/doDelete",
-                                         auth=self.auth, verify=False)
-                response.raise_for_status()
-                return True
-            except Exception as e:
-                print(f"Error deleting job {job_name}: {e}")
-                raise
-
-    def enable_job(self, job_name: str) -> bool:
-        """Enable a disabled Jenkins job."""
-        try:
-            response = requests.post(f"{self.base_url}/job/{job_name}/enable",
-                                     auth=self.auth, verify=False)
-            response.raise_for_status()
-            return True
+            return self.server.get_job_info(job_name)
         except Exception as e:
-            print(f"Error enabling job {job_name}: {e}")
-            raise
-
-    def disable_job(self, job_name: str) -> bool:
-        """Disable an enabled Jenkins job."""
-        try:
-            response = requests.post(f"{self.base_url}/job/{job_name}/disable",
-                                     auth=self.auth, verify=False)
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            print(f"Error disabling job {job_name}: {e}")
-            raise
-
-    def rename_job(self, job_name: str, new_name: str) -> bool:
-        """Rename an existing Jenkins job."""
-        try:
-            params = {"newName": new_name}
-            response = requests.post(f"{self.base_url}/job/{job_name}/doRename", params=params,
-                                     auth=self.auth, verify=False)
-            response.raise_for_status()
-            return True
-        except Exception as e:
-            print(f"Error renaming job {job_name} to {new_name}: {e}")
-            raise
-
-    def get_job_config(self, job_name: str) -> str:
-        """Get the job's configuration XML (prefer python-jenkins)."""
-        try:
-            server = self._make_jenkins_server()
-            return server.get_job_config(job_name)
-        except Exception:
-            try:
-                response = requests.get(f"{self.base_url}/job/{job_name}/config.xml",
-                                        auth=self.auth, verify=False)
-                response.raise_for_status()
-                return response.text
-            except Exception as e:
-                print(f"Error getting config for job {job_name}: {e}")
-                raise
-
-    def update_job_config(self, job_name: str, config_xml: str) -> bool:
-        """Update the job's configuration XML (prefer python-jenkins reconfig)."""
-        try:
-            server = self._make_jenkins_server()
-            server.reconfig_job(job_name, config_xml)
-            return True
-        except Exception:
-            try:
-                headers = {"Content-Type": "application/xml"}
-                response = requests.post(f"{self.base_url}/job/{job_name}/config.xml",
-                                         data=config_xml, headers=headers, auth=self.auth, verify=False)
-                response.raise_for_status()
-                return True
-            except Exception as e:
-                print(f"Error updating config for job {job_name}: {e}")
-                raise
+            logger.debug(f"python-jenkins failed, using REST API: {e}")
+            response = self._api_call('GET', f'/job/{job_name}/api/json')
+            return response.json()
 
     def get_last_build_number(self, job_name: str) -> Optional[int]:
-        """Return last build number for a job, or None."""
+        """Get the last build number for a job"""
         try:
-            server = self._make_jenkins_server()
-            info = server.get_job_info(job_name)
-            last = info.get('lastBuild')
-            if last and 'number' in last:
-                return int(last['number'])
-            lastc = info.get('lastCompletedBuild')
-            if lastc and 'number' in lastc:
-                return int(lastc['number'])
+            info = self.get_job_info(job_name)
+
+            # Try lastBuild first
+            if info.get('lastBuild') and 'number' in info['lastBuild']:
+                return int(info['lastBuild']['number'])
+
+            # Fall back to lastCompletedBuild
+            if info.get('lastCompletedBuild') and 'number' in info['lastCompletedBuild']:
+                return int(info['lastCompletedBuild']['number'])
+
             return None
-        except Exception:
-            try:
-                info = self.get_job_info(job_name)
-                last = info.get('lastBuild')
-                if last and 'number' in last:
-                    return int(last['number'])
-                lastc = info.get('lastCompletedBuild')
-                if lastc and 'number' in lastc:
-                    return int(lastc['number'])
-                return None
-            except Exception as e:
-                print(f"Error getting last build number for {job_name}: {e}")
-                return None
+        except Exception as e:
+            logger.error(f"Error getting last build number for {job_name}: {e}")
+            return None
 
     def get_last_build_timestamp(self, job_name: str) -> Optional[int]:
-        """Return timestamp (ms since epoch) of last build, or None."""
+        """Get timestamp (ms since epoch) of the last build"""
         try:
             last_num = self.get_last_build_number(job_name)
             if last_num is None:
                 return None
-            server = self._make_jenkins_server()
-            info = server.get_build_info(job_name, last_num)
-            return info.get('timestamp')
-        except Exception:
-            try:
-                info = self.get_build_info(job_name, self.get_last_build_number(job_name))
-                return info.get('timestamp')
-            except Exception as e:
-                print(f"Error getting last build timestamp for {job_name}: {e}")
-                return None
 
-    def _make_jenkins_server(self):
-        """Return a python-jenkins Jenkins instance for higher-level operations.
+            build_info = self.get_build_info(job_name, last_num)
+            return build_info.get('timestamp')
+        except Exception as e:
+            logger.error(f"Error getting last build timestamp for {job_name}: {e}")
+            return None
 
-        Caches the server instance on the client object for reuse.
+    # ==================== Build Information ====================
+
+    def get_build_info(self, job_name: str, build_number: int) -> Dict[str, Any]:
+        """Get information about a specific build"""
+        try:
+            return self.server.get_build_info(job_name, build_number)
+        except Exception as e:
+            logger.debug(f"python-jenkins failed, using REST API: {e}")
+            response = self._api_call('GET', f'/job/{job_name}/{build_number}/api/json')
+            return response.json()
+
+    def get_build_console_output(self, job_name: str, build_number: int) -> str:
+        """Get console output from a build (alias for get_build_log)"""
+        return self.get_build_log(job_name, build_number)
+
+    def get_build_log(self, job_name: str, build_number: int) -> str:
+        """Get console log output from a build"""
+        try:
+            return self.server.get_build_console_output(job_name, build_number)
+        except Exception as e:
+            logger.debug(f"python-jenkins failed, using REST API: {e}")
+            response = self._api_call('GET', f'/job/{job_name}/{build_number}/consoleText')
+            return response.text
+
+    # ==================== Build Operations ====================
+
+    def build_job(
+            self,
+            job_name: str,
+            parameters: Optional[Dict[str, Any]] = None,
+            wait_for_start: bool = True,
+            timeout: int = 30,
+            poll_interval: float = 1.0
+    ) -> Dict[str, Optional[int]]:
         """
-        if getattr(self, '_jenkins_server', None) is None:
-            # extract credentials from self.auth
-            username = None
-            password = None
-            if hasattr(self.auth, 'username') and hasattr(self.auth, 'password'):
-                username = self.auth.username
-                password = self.auth.password
-            elif isinstance(self.auth, tuple):
-                username, password = self.auth
-            # create python-jenkins Jenkins object
-            self._jenkins_server = jenkins.Jenkins(self.base_url, username=username, password=password)
-        return self._jenkins_server
+        Trigger a build and optionally wait for it to start.
+
+        Args:
+            job_name: Name of the Jenkins job
+            parameters: Optional build parameters
+            wait_for_start: Wait for build to start and return build number
+            timeout: Maximum seconds to wait for build start
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            Dict with 'queue_id' and 'build_number' (if wait_for_start=True)
+        """
+        try:
+            # Trigger build using python-jenkins
+            queue_id = self.server.build_job(job_name, parameters or {})
+            queue_id = int(queue_id) if queue_id else None
+
+            build_number = None
+            if wait_for_start and queue_id:
+                build_number = self._wait_for_build_start(
+                    queue_id, timeout, poll_interval
+                )
+
+            return {"queue_id": queue_id, "build_number": build_number}
+
+        except Exception as e:
+            logger.debug(f"python-jenkins failed, using REST API: {e}")
+            return self._build_job_rest(
+                job_name, parameters, wait_for_start, timeout, poll_interval
+            )
+
+    def _build_job_rest(
+            self,
+            job_name: str,
+            parameters: Optional[Dict[str, Any]],
+            wait_for_start: bool,
+            timeout: int,
+            poll_interval: float
+    ) -> Dict[str, Optional[int]]:
+        """Build job using REST API (fallback method)"""
+        endpoint = f'/job/{job_name}/buildWithParameters' if parameters else f'/job/{job_name}/build'
+
+        response = self._api_call('POST', endpoint, params=parameters)
+
+        # Extract queue ID from Location header
+        location = response.headers.get('Location', '')
+        queue_id = self._extract_queue_id(location)
+
+        build_number = None
+        if wait_for_start and queue_id:
+            build_number = self._wait_for_build_start(queue_id, timeout, poll_interval)
+
+        return {"queue_id": queue_id, "build_number": build_number}
+
+    def _wait_for_build_start(
+            self,
+            queue_id: int,
+            timeout: int,
+            poll_interval: float
+    ) -> Optional[int]:
+        """Wait for a queued build to start and return its build number"""
+        elapsed = 0.0
+
+        while elapsed < timeout:
+            try:
+                # Try python-jenkins first
+                item = self.server.get_queue_item(queue_id)
+                if item and item.get('executable'):
+                    return int(item['executable']['number'])
+            except Exception:
+                # Fall back to REST API
+                try:
+                    response = self._api_call('GET', f'/queue/item/{queue_id}/api/json')
+                    item = response.json()
+                    if item.get('executable'):
+                        return int(item['executable']['number'])
+                except Exception:
+                    pass
+
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        logger.warning(f"Timeout waiting for build {queue_id} to start")
+        return None
+
+    @staticmethod
+    def _extract_queue_id(location: str) -> Optional[int]:
+        """Extract queue ID from Jenkins Location header"""
+        if not location:
+            return None
+
+        parts = location.rstrip('/').split('/')
+        for part in reversed(parts):
+            if part.isdigit():
+                return int(part)
+        return None
+
+    def stop_build(self, job_name: str, build_number: int) -> None:
+        """Stop a running build"""
+        self._api_call('POST', f'/job/{job_name}/{build_number}/stop')
+        logger.info(f"Stopped build {job_name} #{build_number}")
+
+    # ==================== Job Management ====================
+
+    def create_job(self, job_name: str, config_xml: str) -> bool:
+        """Create a new Jenkins job with XML configuration"""
+        try:
+            self.server.create_job(job_name, config_xml)
+            self.server.reconfig_job(job_name, config_xml)
+            logger.info(f"Created job: {job_name}")
+            return True
+        except Exception as e:
+            logger.debug(f"python-jenkins failed, using REST API: {e}")
+            self._api_call(
+                'POST',
+                '/createItem',
+                params={'name': job_name},
+                data=config_xml,
+                headers={'Content-Type': 'application/xml'}
+            )
+            logger.info(f"Created job: {job_name}")
+            return True
+
+    def create_job_from_copy(self, new_job_name: str, source_job_name: str) -> bool:
+        """Create a new job by copying an existing one"""
+        # Get source config
+        config_xml = self.get_job_config(source_job_name)
+
+        # Update job references in XML
+        config_xml = self._update_job_references(config_xml, source_job_name, new_job_name)
+
+        # Create new job
+        return self.create_job(new_job_name, config_xml)
+
+    @staticmethod
+    def _update_job_references(config_xml: str, old_name: str, new_name: str) -> str:
+        """Update job name references in XML configuration"""
+        try:
+            root = ET.fromstring(config_xml)
+
+            # Update projectName and projectFullName elements
+            for elem in root.iter():
+                if elem.tag in ['projectName', 'projectFullName'] and elem.text == old_name:
+                    elem.text = new_name
+
+            return ET.tostring(root, encoding='unicode', method='xml')
+        except Exception as e:
+            logger.warning(f"Failed to update job references in XML: {e}")
+            return config_xml
+
+    def create_job_from_dict(
+            self,
+            job_name: str,
+            config_data: Dict[str, Any],
+            root_tag: str = 'project'
+    ) -> bool:
+        """
+        Create a job from a dictionary (simplified XML generation).
+
+        Note: For complex configurations, use create_job() with full XML
+        or create_job_from_copy() instead.
+        """
+        config_xml = self._dict_to_xml(root_tag, config_data)
+        return self.create_job(job_name, config_xml)
+
+    @staticmethod
+    def _dict_to_xml(root_tag: str, data: Dict[str, Any]) -> str:
+        """Convert dictionary to XML (basic implementation)"""
+
+        def build_elem(parent: ET.Element, obj: Any) -> None:
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    child = ET.SubElement(parent, key)
+                    build_elem(child, value)
+            elif isinstance(obj, list):
+                for item in obj:
+                    item_el = ET.SubElement(parent, 'item')
+                    build_elem(item_el, item)
+            else:
+                parent.text = str(obj)
+
+        root = ET.Element(root_tag)
+        build_elem(root, data)
+        return ET.tostring(root, encoding='unicode')
+
+    def delete_job(self, job_name: str) -> bool:
+        """Delete an existing job"""
+        try:
+            self.server.delete_job(job_name)
+            logger.info(f"Deleted job: {job_name}")
+            return True
+        except Exception as e:
+            logger.debug(f"python-jenkins failed, using REST API: {e}")
+            self._api_call('POST', f'/job/{job_name}/doDelete')
+            logger.info(f"Deleted job: {job_name}")
+            return True
+
+    def enable_job(self, job_name: str) -> bool:
+        """Enable a disabled job"""
+        self._api_call('POST', f'/job/{job_name}/enable')
+        logger.info(f"Enabled job: {job_name}")
+        return True
+
+    def disable_job(self, job_name: str) -> bool:
+        """Disable a job"""
+        self._api_call('POST', f'/job/{job_name}/disable')
+        logger.info(f"Disabled job: {job_name}")
+        return True
+
+    def rename_job(self, job_name: str, new_name: str) -> bool:
+        """Rename a job"""
+        self._api_call(
+            'POST',
+            f'/job/{job_name}/doRename',
+            params={'newName': new_name}
+        )
+        logger.info(f"Renamed job: {job_name} -> {new_name}")
+        return True
+
+    # ==================== Job Configuration ====================
+
+    def get_job_config(self, job_name: str) -> str:
+        """Get job configuration XML"""
+        try:
+            return self.server.get_job_config(job_name)
+        except Exception as e:
+            logger.debug(f"python-jenkins failed, using REST API: {e}")
+            response = self._api_call('GET', f'/job/{job_name}/config.xml')
+            return response.text
+
+    def update_job_config(self, job_name: str, config_xml: str) -> bool:
+        """Update job configuration XML"""
+        try:
+            self.server.reconfig_job(job_name, config_xml)
+            logger.info(f"Updated config for job: {job_name}")
+            return True
+        except Exception as e:
+            logger.debug(f"python-jenkins failed, using REST API: {e}")
+            self._api_call(
+                'POST',
+                f'/job/{job_name}/config.xml',
+                data=config_xml,
+                headers={'Content-Type': 'application/xml'}
+            )
+            logger.info(f"Updated config for job: {job_name}")
+            return True
+
+    # ==================== Queue & Node Information ====================
+
+    def get_queue_info(self) -> List[Dict[str, Any]]:
+        """Get information about the build queue"""
+        try:
+            response = self._api_call('GET', '/queue/api/json')
+            return response.json().get('items', [])
+        except Exception as e:
+            logger.error(f"Error getting queue info: {e}")
+            return []
+
+    def get_nodes(self) -> List[Dict[str, Any]]:
+        """Get list of all Jenkins nodes"""
+        try:
+            response = self._api_call('GET', '/computer/api/json')
+            return response.json().get('computer', [])
+        except Exception as e:
+            logger.error(f"Error getting nodes: {e}")
+            return []
+
+    def get_node_info(self, node_name: str) -> Dict[str, Any]:
+        """Get information about a specific node"""
+        response = self._api_call('GET', f'/computer/{node_name}/api/json')
+        return response.json()
 
 
-# Create a singleton instance
-# Replace eager instantiation with a lazy factory
-jenkins_client = None
+# ==================== Client Factory ====================
+
+_default_client: Optional[JenkinsClient] = None
 
 
-def get_jenkins_client() -> JenkinsClient:
-    """Return a shared JenkinsClient, creating it when first requested."""
-    global jenkins_client
-    if jenkins_client is None:
-        jenkins_client = JenkinsClient()
-    return jenkins_client
+def get_jenkins_client(settings: Optional[JenkinsSettings] = None) -> JenkinsClient:
+    """
+    Get Jenkins client instance.
+
+    Args:
+        settings: Optional JenkinsSettings. If None, uses default settings.
+
+    Returns:
+        JenkinsClient instance
+
+    Note: If no settings provided, returns a cached default client (singleton).
+          If settings are provided, always returns a new client instance.
+    """
+    global _default_client
+
+    if settings is not None:
+        # Always create new client with custom settings
+        return JenkinsClient(settings)
+
+    # Use cached default client
+    if _default_client is None:
+        _default_client = JenkinsClient()
+
+    return _default_client
+
+
+def reset_default_client() -> None:
+    """Reset the default client (useful for testing or reconfiguration)"""
+    global _default_client
+    _default_client = None

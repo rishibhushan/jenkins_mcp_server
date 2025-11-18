@@ -1,146 +1,252 @@
 #!/usr/bin/env node
+
 /**
- * Jenkins MCP Server launcher for npx/github:
- * - Creates local venv (.npx_venv) if missing
- * - Installs deps from requirements.txt (or ./wheels if present)
- * - Sets PYTHONPATH to locate the package (src/ or repo root)
- * - Sets SSL cert bundle defaults on macOS if unset (fixes corporate TLS proxies)
- * - Runs: python -m jenkins_mcp_server [args...]
+ * Jenkins MCP Server launcher
  *
- * Env:
- *   PYTHON_CMD          override python executable (default: python3 on *nix, python on Win)
- *   NPX_SKIP_INSTALL=1  skip venv + pip install
- *   HTTP_PROXY/HTTPS_PROXY/NO_PROXY  passed through to pip and runtime
- *   SSL_CERT_FILE / REQUESTS_CA_BUNDLE  honored if already set (we don't override)
+ * Responsibilities:
+ *  1. Create local Python venv
+ *  2. Auto-install dependencies (offline wheels if available)
+ *  3. Auto-detect/download corporate CA certificates
+ *  4. Optionally download portable Windows EXE
+ *  5. Run MCP server via Python or EXE
+ *  6. Keep pip output OFF stdout to avoid corrupting JSON-RPC
  */
 
-const { spawnSync, spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const { spawn, spawnSync } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+const https = require("https");
 
-const projectRoot = path.dirname(__filename);
-const srcPkgPath = path.join(projectRoot, 'src', 'jenkins_mcp_server');
-const rootPkgPath = path.join(projectRoot, 'jenkins_mcp_server');
-const wheelsDir = path.join(projectRoot, 'wheels');
-const venvDir = path.join(projectRoot, '.npx_venv');
-const reqFile = path.join(projectRoot, 'requirements.txt');
+// Root project dir (where cli.js is located)
+const ROOT = path.resolve(__dirname);
 
-const isWin = process.platform === 'win32';
-const pythonCmd = process.env.PYTHON_CMD || (isWin ? 'python' : 'python3');
-const skipInstall = process.env.NPX_SKIP_INSTALL === '1' || process.argv.includes('--no-venv') || process.argv.includes('--skip-install');
+// Python virtual environment
+const VENV = path.join(ROOT, ".npx_venv");
+const PYTHON = process.platform === "win32"
+  ? path.join(VENV, "Scripts", "python.exe")
+  : path.join(VENV, "bin", "python");
 
-function execSyncOrDie(cmd, args, opts) {
-  const res = spawnSync(cmd, args, { stdio: 'inherit', ...opts });
-  if (res.error) throw res.error;
-  if (typeof res.status === 'number' && res.status !== 0) process.exit(res.status);
-  return res;
+// Location of server package
+const SRC = path.join(ROOT, "src");
+
+////////////////////////////////////////////////////////////////////////////////
+// UTILITY HELPERS
+////////////////////////////////////////////////////////////////////////////////
+
+function log(msg) {
+  // log to stderr so VS Code does NOT treat it as JSON-RPC traffic
+  process.stderr.write(msg + "\n");
 }
 
-function findPython() {
-  for (const candidate of [pythonCmd, isWin ? 'python' : 'python3', 'python']) {
-    try {
-      const r = spawnSync(candidate, ['--version'], { stdio: 'ignore' });
-      if (r.status === 0) return candidate;
-    } catch (_) {}
-  }
-  return null;
+function fileExists(p) {
+  try { fs.accessSync(p); return true; } catch { return false; }
 }
 
-function ensureVenvAndInstall() {
-  if (skipInstall) {
-    console.log('Skipping venv/deps install (NPX_SKIP_INSTALL or --no-venv).');
-    return null;
-  }
-  const py = findPython();
-  if (!py) {
-    console.error('Python not found. Install Python 3 and/or set PYTHON_CMD.');
+////////////////////////////////////////////////////////////////////////////////
+// STEP 1: Ensure Python is available
+////////////////////////////////////////////////////////////////////////////////
+
+function resolvePython() {
+  // First check system python3
+  const python3 = spawnSync("python3", ["--version"]);
+  if (python3.status === 0) return "python3";
+
+  // check python
+  const python = spawnSync("python", ["--version"]);
+  if (python.status === 0) return "python";
+
+  log("FATAL: No Python found. Please install Python 3.10+.");
+  process.exit(1);
+}
+
+const SYSTEM_PYTHON = resolvePython();
+
+////////////////////////////////////////////////////////////////////////////////
+// STEP 2: Create virtual env if needed
+////////////////////////////////////////////////////////////////////////////////
+
+function ensureVenv() {
+  if (fileExists(VENV)) return;
+
+  log("Creating Python virtual environment...");
+  const r = spawnSync(SYSTEM_PYTHON, ["-m", "venv", VENV], {
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+
+  if (r.status !== 0) {
+    log("ERROR: Failed to create virtual environment.");
+    log(String(r.stderr));
     process.exit(1);
   }
-  if (!fs.existsSync(venvDir)) {
-    console.log('Creating virtual environment:', venvDir);
-    execSyncOrDie(py, ['-m', 'venv', venvDir]);
-  }
-  const venvPython = isWin ? path.join(venvDir, 'Scripts', 'python.exe') : path.join(venvDir, 'bin', 'python');
-  const venvPip = isWin ? path.join(venvDir, 'Scripts', 'pip.exe') : path.join(venvDir, 'bin', 'pip');
-
-  // Upgrade pip (uses the same cert/proxy env we’ll set for install)
-  console.log('Ensuring pip is available in venv...');
-  execSyncOrDie(venvPython, ['-m', 'pip', 'install', '--upgrade', 'pip']);
-
-  const pipArgs = [];
-  // If you later add wheels/ for offline installs, this will auto-use them
-  if (fs.existsSync(wheelsDir)) {
-    pipArgs.push('--no-index', `--find-links=${wheelsDir}`);
-  }
-  // Install dependencies
-  if (fs.existsSync(reqFile)) {
-    console.log('Installing Python dependencies from requirements.txt into venv...');
-    execSyncOrDie(venvPip, ['install', ...pipArgs, '-r', reqFile], { env: buildEnvForPip() });
-  } else {
-    console.warn('No requirements.txt found. Skipping dependency install.');
-  }
-  return venvPython;
 }
 
-function buildEnvForPip() {
-  const env = { ...process.env };
+ensureVenv();
 
-  // Pass through proxies if set
-  for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy']) {
-    if (process.env[k]) env[k] = process.env[k];
+////////////////////////////////////////////////////////////////////////////////
+// STEP 3: Install corporate CA bundle
+////////////////////////////////////////////////////////////////////////////////
+
+async function maybeDownloadCorporateCA() {
+  const CA_ENV = process.env.CORPORATE_CA_URL;
+  const CA_PATH = path.join(VENV, "corporate-ca.crt");
+
+  // If file already exists, use it
+  if (fileExists(CA_PATH)) {
+    process.env.REQUESTS_CA_BUNDLE = CA_PATH;
+    process.env.SSL_CERT_FILE = CA_PATH;
+    return;
   }
 
-  // If user hasn’t provided a cert bundle, set a sane default on macOS
-  // (This fixes corporate TLS proxy issues without user exports.)
-  const macSystemCert = '/etc/ssl/cert.pem';
-  const hasUserCerts = !!(env.SSL_CERT_FILE || env.REQUESTS_CA_BUNDLE);
-  if (!hasUserCerts && process.platform === 'darwin' && fs.existsSync(macSystemCert)) {
-    env.SSL_CERT_FILE = macSystemCert;
-    env.REQUESTS_CA_BUNDLE = macSystemCert;
-  }
+  // If not provided, skip
+  if (!CA_ENV) return;
 
-  return env;
-}
+  return new Promise((resolve) => {
+    log("Downloading corporate CA bundle...");
+    const file = fs.createWriteStream(CA_PATH);
 
-function buildRuntimeEnv(pythonpathToPrepend) {
-  const env = buildEnvForPip(); // include proxy + cert defaults
-  const existing = env.PYTHONPATH || '';
-  env.PYTHONPATH = pythonpathToPrepend + (existing ? path.delimiter + existing : '');
-  return env;
-}
-
-function resolvePythonPath() {
-  if (fs.existsSync(srcPkgPath)) return path.join(projectRoot, 'src');
-  if (fs.existsSync(rootPkgPath)) return projectRoot;
-  // Fallback: try src/ anyway
-  return path.join(projectRoot, 'src');
-}
-
-function runServer(venvPython) {
-  const pyExec = venvPython || findPython();
-  if (!pyExec) {
-    console.error('Python not found. Install Python 3 and/or set PYTHON_CMD.');
-    process.exit(1);
-  }
-  const pyPath = resolvePythonPath();
-  const env = buildRuntimeEnv(pyPath);
-  const args = ['-m', 'jenkins_mcp_server', ...process.argv.slice(2)];
-
-  console.log(`Running: ${pyExec} ${args.join(' ')}`);
-  const child = spawn(pyExec, args, { stdio: 'inherit', env, cwd: process.cwd() });
-
-  child.on('exit', (code) => process.exit(code));
-  child.on('error', (err) => {
-    console.error('Failed to start python process:', err);
-    process.exit(1);
+    https.get(CA_ENV, (res) => {
+      if (res.statusCode !== 200) {
+        log(`ERROR: Unable to download CA from ${CA_ENV}`);
+        file.close();
+        resolve();
+        return;
+      }
+      res.pipe(file);
+      file.on("finish", () => {
+        file.close();
+        process.env.REQUESTS_CA_BUNDLE = CA_PATH;
+        process.env.SSL_CERT_FILE = CA_PATH;
+        resolve();
+      });
+    }).on("error", () => {
+      log("ERROR: Failed to download corporate CA.");
+      resolve();
+    });
   });
 }
 
-// Main
-try {
-  const venvPython = ensureVenvAndInstall();
-  runServer(venvPython);
-} catch (err) {
-  console.error('Error preparing environment:', err);
-  process.exit(1);
+////////////////////////////////////////////////////////////////////////////////
+// STEP 4: Install dependencies (pip install) — OFFLINE FIRST
+////////////////////////////////////////////////////////////////////////////////
+
+function installDependencies() {
+  const wheelsDir = path.join(ROOT, "wheels");
+  const hasWheels = fileExists(wheelsDir);
+
+  log("Installing Python dependencies...");
+
+  const args = [
+    "-m", "pip", "install",
+    "--disable-pip-version-check",
+    "--no-color"
+  ];
+
+  if (hasWheels) {
+    log("Using offline wheels directory...");
+    args.push("--no-index", "-f", wheelsDir);
+  }
+
+  args.push("-r", path.join(ROOT, "requirements.txt"));
+
+  const proc = spawn(PYTHON, args, {
+    env: process.env,
+    stdio: ["ignore", "ignore", "pipe"] // IMPORTANT: keep stdout silent
+  });
+
+  let stderrBuf = "";
+  proc.stderr.on("data", (d) => {
+    stderrBuf += d.toString();
+  });
+
+  proc.on("close", (code) => {
+    if (code !== 0) {
+      log("ERROR installing dependencies:");
+      log(stderrBuf);
+      process.exit(1);
+    }
+    launchServer();
+  });
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// STEP 5: Optional Windows portable EXE
+////////////////////////////////////////////////////////////////////////////////
+
+function tryRunWindowsExe() {
+  const EXE_URL = process.env.EXE_URL;
+  if (!EXE_URL) return false;
+
+  if (process.platform !== "win32") return false;
+
+  const EXE_PATH = path.join(ROOT, "jenkins_mcp_server.exe");
+
+  if (!fileExists(EXE_PATH)) {
+    log("Downloading Windows EXE...");
+    const file = fs.createWriteStream(EXE_PATH);
+
+    return new Promise((resolve) => {
+      https.get(EXE_URL, (res) => {
+        if (res.statusCode !== 200) {
+          log("ERROR downloading EXE.");
+          resolve(false);
+          return;
+        }
+        res.pipe(file);
+        file.on("finish", () => {
+          file.close();
+          resolve(true);
+        });
+      });
+    });
+  }
+
+  return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// STEP 6: Launch MCP server
+////////////////////////////////////////////////////////////////////////////////
+
+function launchServer() {
+  log("Starting Jenkins MCP Server...");
+
+  const env = {
+    ...process.env,
+    PYTHONPATH: SRC,            // ensure Python resolves our package correctly
+    REQUESTS_CA_BUNDLE: process.env.REQUESTS_CA_BUNDLE || "",
+    SSL_CERT_FILE: process.env.SSL_CERT_FILE || ""
+  };
+
+  const proc = spawn(PYTHON, ["-m", "jenkins_mcp_server"], {
+    env,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+
+  // Forward MCP RPC bytes from Python stdout → VS Code stdin
+  proc.stdout.pipe(process.stdout);
+
+  // Send errors to stderr only
+  proc.stderr.on("data", (d) => process.stderr.write(d));
+
+  // Keyboard input is forwarded to the server
+  process.stdin.pipe(proc.stdin);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// MAIN LOGIC
+////////////////////////////////////////////////////////////////////////////////
+
+(async () => {
+  await maybeDownloadCorporateCA();
+
+  // EXE mode only for Windows users
+  const ranExe = await tryRunWindowsExe();
+  if (ranExe === true && process.platform === "win32") {
+    spawn("jenkins_mcp_server.exe", [], {
+      stdio: "inherit"
+    });
+    return;
+  }
+
+  installDependencies();
+})();

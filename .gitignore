@@ -2,3 +2,4 @@
 .venv/
 .npx_venv/
 node_modules/
+.env

@@ -1,278 +1,278 @@
-import os
+"""
+Jenkins MCP Server Configuration Module
+
+Handles loading Jenkins connection settings from multiple sources:
+1. VS Code settings.json (highest priority)
+2. Environment variables / .env file
+3. Direct instantiation with parameters
+"""
+
 import json
+import logging
 import re
 from pathlib import Path
-from pydantic_settings import BaseSettings
-from typing import Optional, Dict, Any, List
-from pydantic import Field
+from typing import Any, Dict, Optional
 
-def parse_jsonc(jsonc_str: str) -> Dict[str, Any]:
-    """Parse JSON with comments (JSONC) with extra robust error handling"""
-    if not jsonc_str or not jsonc_str.strip():
-        print("Warning: Empty JSON string")
-        return {}
-        
-    try:
-        # First attempt: try direct loading (fastest)
-        try:
-            return json.loads(jsonc_str)
-        except json.JSONDecodeError:
-            # Continue to more complex parsing
-            pass
-            
-        # Remove single-line comments (// ...)
-        json_str = re.sub(r'//.*$', '', jsonc_str, flags=re.MULTILINE)
-        
-        # Remove multi-line comments (/* ... */)
-        json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
-        
-        # Replace any control characters with spaces
-        json_str = ''.join(ch if ord(ch) >= 32 else ' ' for ch in json_str)
-        
-        # Try parsing again
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError as e:
-            print(f"Error parsing JSON after comment removal: {e}")
-            
-        # Try with more aggressive cleanup
-        cleaned_str = re.sub(r'\s+', ' ', json_str).strip()
-        
-        # Fix common JSON syntax errors
-        # Remove trailing commas
-        cleaned_str = re.sub(r',\s*}', '}', cleaned_str)
-        cleaned_str = re.sub(r',\s*]', ']', cleaned_str)
-        
-        # Add missing braces if necessary
-        if not cleaned_str.startswith('{') and not cleaned_str.startswith('['):
-            cleaned_str = '{' + cleaned_str
-        if not cleaned_str.endswith('}') and not cleaned_str.endswith(']'):
-            if cleaned_str.startswith('{'):
-                cleaned_str = cleaned_str + '}'
-            elif cleaned_str.startswith('['):
-                cleaned_str = cleaned_str + ']'
-                
-        # Try parsing with very aggressive cleanup
-        try:
-            return json.loads(cleaned_str)
-        except json.JSONDecodeError as e:
-            print(f"Error parsing JSON after aggressive cleanup: {e}")
-            
-        # Last resort: manually extract just the Jenkins settings if present
-        try:
-            jenkins_pattern = r'"jenkins-mcp-server\.jenkins"\s*:\s*{([^}]+)}'
-            match = re.search(jenkins_pattern, json_str)
-            if match:
-                jenkins_str = '{' + f'"jenkins-mcp-server.jenkins": {{{match.group(1)}}}' + '}'
-                return json.loads(jenkins_str)
-        except Exception as e:
-            print(f"Error extracting Jenkins settings: {e}")
-            
-        return {}
-    except Exception as e:
-        print(f"Unexpected error parsing JSON: {e}")
-        return {}
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-def get_vscode_settings() -> Dict[str, Any]:
-    """Get VS Code settings for Jenkins MCP server"""
-    try:
-        # Try to find VS Code settings.json
-        home = Path.home()
-        print("\nLooking for VS Code settings in:")
-        settings_paths: List[Path] = [
-            # macOS
-            home / "Library/Application Support/Code/User/settings.json",
-            home / "Library/Application Support/Code - Insiders/User/settings.json",
-            # Linux
-            home / ".config/Code/User/settings.json",
-            home / ".config/Code - Insiders/User/settings.json",
-            # Windows
-            home / "AppData/Roaming/Code/User/settings.json",
-            home / "AppData/Roaming/Code - Insiders/User/settings.json",
-        ]
-        
-        workspace_settings = Path.cwd() / ".vscode/settings.json"
-        if workspace_settings.exists():
-            settings_paths.insert(0, workspace_settings)
-            print(f"Found workspace settings at: {workspace_settings}")
-        
-        for path in settings_paths:
-            print(f"Checking {path}")
-            if path.exists():
-                print(f"Found settings at: {path}")
-                try:
-                    with open(path, 'r') as f:
-                        # Use our custom parser for JSONC
-                        settings = parse_jsonc(f.read())
-                        
-                        # Check for traditional jenkins-mcp-server.jenkins path
-                        jenkins_settings = settings.get("jenkins-mcp-server", {}).get("jenkins", {})
-                        if jenkins_settings:
-                            print("Found Jenkins settings in VS Code config at jenkins-mcp-server.jenkins")
-                            # Don't print sensitive values
-                            safe_settings = jenkins_settings.copy()
-                            if 'password' in safe_settings:
-                                safe_settings['password'] = '****'
-                            if 'token' in safe_settings:
-                                safe_settings['token'] = '****'
-                            print(f"Settings found: {json.dumps(safe_settings, indent=2)}")
-                            return jenkins_settings
-                        
-                        # Check for MCP server configuration path
-                        mcp_settings = settings.get("mcp", {}).get("servers", {}).get("jenkins-mcp-server", {})
-                        if mcp_settings and "jenkinsConfig" in mcp_settings:
-                            jenkins_settings = mcp_settings["jenkinsConfig"]
-                            print("Found Jenkins settings in VS Code config at mcp.servers.jenkins-mcp-server.jenkinsConfig")
-                            # Don't print sensitive values
-                            safe_settings = jenkins_settings.copy()
-                            if 'password' in safe_settings:
-                                safe_settings['password'] = '****'
-                            if 'token' in safe_settings:
-                                safe_settings['token'] = '****'
-                            print(f"Settings found: {json.dumps(safe_settings, indent=2)}")
-                            return jenkins_settings
-                        
-                        print("No Jenkins settings found in this file")
-                except Exception as e:
-                    print(f"Error parsing JSON in {path}: {str(e)}")
-                    continue
-        
-        print("No Jenkins settings found in any VS Code settings file")
-        return {}
-    except Exception as e:
-        print(f"Error reading VS Code settings: {e}")
-        return {}
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class JenkinsSettings(BaseSettings):
-    """Jenkins connection settings."""
     """
-    This model keeps `jenkins_url` as the canonical attribute used across the
-    codebase, but also accepts an incoming key named `url` (from VS Code JSON
-    or other sources) by using a pydantic alias. That means callers that
-    provide `url` will populate `jenkins_url` without changing the rest of
-    the codebase.
+    Jenkins connection settings with support for multiple configuration sources.
+
+    Priority order:
+    1. Directly passed parameters
+    2. VS Code settings
+    3. Environment variables
+    4. .env file
     """
-    # Keep canonical field name used in the code; accept 'url' as an alias
-    jenkins_url: Optional[str] = Field(default=None, alias="url")
 
-    # jenkins_url: str = "http://localhost:8080"
-    # jenkins_url: Optional[str] = Field(default="http://localhost:8080", alias="url")
-    username: Optional[str] = None
-    password: Optional[str] = None
-    token: Optional[str] = None  # API token can be used instead of password
-    
-    # Pydantic v2 uses model_config for configuration
-    model_config = {
-        "env_file_encoding": "utf-8",
-        "env_prefix": "JENKINS_",
-        "case_sensitive": False,
-        "populate_by_name": True,
-        "env_file": ".env",  # Default .env file
-    }
-    
-    def __init__(self, custom_env_path: Optional[str] = None, **data):
-        """Initialize with optional custom .env file path"""
-        if custom_env_path:
-            # Create a new model_config with the custom env file
-            print(f"Using custom .env file: {custom_env_path}")
-            # For Pydantic v2, we need to update the class's model_config
-            # We can't modify self.model_config directly as it's a property in v2
-            model_config_dict = dict(self.__class__.model_config)
-            model_config_dict["env_file"] = custom_env_path
-            self.__class__.model_config = model_config_dict
-        
-        super().__init__(**data)
+    # Use 'url' as the primary field name, but accept 'jenkins_url' as alias
+    url: Optional[str] = Field(
+        default=None,
+        alias="jenkins_url",
+        description="Jenkins server URL (e.g., http://localhost:8080)"
+    )
+    username: Optional[str] = Field(
+        default=None,
+        description="Jenkins username"
+    )
+    password: Optional[str] = Field(
+        default=None,
+        description="Jenkins password"
+    )
+    token: Optional[str] = Field(
+        default=None,
+        description="Jenkins API token (preferred over password)"
+    )
 
-    # Convenience method to show what URL will be used
-    def effective_url(self) -> Optional[str]:
+    model_config = SettingsConfigDict(
+        env_prefix="JENKINS_",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        populate_by_name=True,  # Allow both 'url' and 'jenkins_url'
+        extra="ignore"
+    )
+
+    @field_validator('url')
+    @classmethod
+    def strip_trailing_slash(cls, v: Optional[str]) -> Optional[str]:
+        """Remove trailing slash from URL"""
+        if v:
+            return v.rstrip('/')
+        return v
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if minimum required settings are present"""
+        return bool(self.url and self.username and (self.token or self.password))
+
+    @property
+    def auth_method(self) -> str:
+        """Return the authentication method being used"""
+        if self.token:
+            return "API Token"
+        elif self.password:
+            return "Password"
+        return "None"
+
+    def get_credentials(self) -> tuple[Optional[str], Optional[str]]:
+        """Return (username, password/token) tuple for authentication"""
+        if self.username:
+            auth_value = self.token if self.token else self.password
+            return (self.username, auth_value)
+        return (None, None)
+
+    def log_config(self, hide_sensitive: bool = True) -> None:
+        """Log current configuration (with optional masking of sensitive data)"""
+        logger.info("Jenkins Configuration:")
+        logger.info(f"  URL: {self.url or 'Not configured'}")
+        logger.info(f"  Username: {self.username or 'Not configured'}")
+
+        if hide_sensitive:
+            logger.info(f"  Authentication: {self.auth_method}")
+        else:
+            logger.info(f"  Token: {self.token or 'Not set'}")
+            logger.info(f"  Password: {self.password or 'Not set'}")
+
+
+class VSCodeSettingsLoader:
+    """Handles loading Jenkins settings from VS Code settings.json files"""
+
+    # Standard VS Code settings paths by platform
+    VSCODE_PATHS = [
+        # Workspace settings (highest priority if exists)
+        Path.cwd() / ".vscode/settings.json",
+        # User settings (platform-specific)
+        Path.home() / "Library/Application Support/Code/User/settings.json",  # macOS
+        Path.home() / "Library/Application Support/Code - Insiders/User/settings.json",
+        Path.home() / ".config/Code/User/settings.json",  # Linux
+        Path.home() / ".config/Code - Insiders/User/settings.json",
+        Path.home() / "AppData/Roaming/Code/User/settings.json",  # Windows
+        Path.home() / "AppData/Roaming/Code - Insiders/User/settings.json",
+    ]
+
+    @staticmethod
+    def parse_jsonc(content: str) -> Dict[str, Any]:
         """
-        Return the effective Jenkins URL.
-        This ensures callers can ask for the URL without worrying about
-        whether it was provided under the alias `url` or the canonical
-        `jenkins_url` field.
+        Parse JSON with comments (JSONC).
+
+        Removes single-line (//) and multi-line (/* */) comments before parsing.
         """
-        return self.jenkins_url
+        if not content or not content.strip():
+            return {}
 
-
-
-# Function to load settings from all sources
-def load_settings(custom_env_path: Optional[str] = None) -> JenkinsSettings:
-    """
-    Load Jenkins settings from all possible sources with priority:
-    1. VS Code settings
-    2. Environment variables (from custom .env if provided)
-    3. Default values
-    """
-    # Try to get settings from VS Code global or workspace settings
-    print("\nAttempting to load settings...")
-    vscode_settings = get_vscode_settings()
-
-    # Create settings instance from environment variables (using custom path if provided)
-    print("\nLoading environment variables...")
-    jenkins_settings = JenkinsSettings(custom_env_path=custom_env_path)
-
-    # --- FIX for JENKINS_URL not mapping to jenkins_url ---
-    # Pydantic expects JENKINS_JENKINS_URL (because of env_prefix),
-    # but most .env files only have JENKINS_URL. We handle that explicitly.
-    env_url = None
-
-    # 1️⃣ Check in the running environment
-    env_url = os.environ.get("JENKINS_URL") or os.environ.get("JENKINS__URL")
-
-    # 2️⃣ If not found, and a custom .env path is provided, read that manually
-    if not env_url and custom_env_path:
         try:
-            env_path = Path(custom_env_path)
-            if env_path.exists():
-                print(f"Reading env file for URL: {env_path}")
-                for line in env_path.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, value = line.split("=", 1)
-                    if key.strip().upper() == "JENKINS_URL":
-                        env_url = value.strip().strip("'\"")
-                        break
-        except Exception as e:
-            print(f"Error reading custom env file {custom_env_path}: {e}")
+            # Try direct JSON parse first (fastest path)
+            return json.loads(content)
+        except json.JSONDecodeError:
+            pass
 
-    # 3️⃣ If found, assign it
-    if env_url:
-        print(f"Using JENKINS_URL from environment/.env: {env_url}")
-        jenkins_settings.jenkins_url = env_url
-    # -------------------------------------------------------
+        # Remove comments
+        # Remove single-line comments
+        content = re.sub(r'//.*$', '', content, flags=re.MULTILINE)
+        # Remove multi-line comments
+        content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
 
-    # 4️⃣ Override with VS Code settings (highest priority)
-    if vscode_settings:
-        print("\nOverriding with VS Code settings...")
-        if 'url' in vscode_settings:
-            print(f"Using URL from VS Code: {vscode_settings['url']}")
-            jenkins_settings.jenkins_url = vscode_settings['url']
-        if 'username' in vscode_settings:
-            print(f"Using username from VS Code: {vscode_settings['username']}")
-            jenkins_settings.username = vscode_settings['username']
-        if 'token' in vscode_settings:
-            print("Using token from VS Code settings")
-            jenkins_settings.token = vscode_settings['token']
-        if 'password' in vscode_settings:
-            print("Using password from VS Code settings")
-            jenkins_settings.password = vscode_settings['password']
+        # Clean up trailing commas (common JSONC pattern)
+        content = re.sub(r',(\s*[}\]])', r'\1', content)
 
-    return jenkins_settings
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse JSONC: {e}")
+            return {}
 
-# Create initial settings instance with default paths
-jenkins_settings = load_settings()
+    @classmethod
+    def find_jenkins_settings(cls, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Extract Jenkins settings from VS Code settings dictionary.
 
-# Log final configuration
-print(f"\nFinal configuration:")
-print(f"Jenkins server configured: {jenkins_settings.jenkins_url}")
-if jenkins_settings.username:
-    print(f"Using authentication for user: {jenkins_settings.username}")
-    if jenkins_settings.token:
-        print("Authentication method: API Token")
-    elif jenkins_settings.password:
-        print("Authentication method: Password")
-else:
-    print("No authentication configured for Jenkins")
+        Supports two configuration patterns:
+        1. "jenkins-mcp-server": { "jenkins": {...} }
+        2. "mcp": { "servers": { "jenkins-mcp-server": { "jenkinsConfig": {...} } } }
+        """
+        # Pattern 1: Direct jenkins-mcp-server.jenkins
+        jenkins_config = settings.get("jenkins-mcp-server", {}).get("jenkins", {})
+        if jenkins_config:
+            return jenkins_config
+
+        # Pattern 2: MCP servers configuration
+        mcp_config = (
+            settings.get("mcp", {})
+            .get("servers", {})
+            .get("jenkins-mcp-server", {})
+            .get("jenkinsConfig", {})
+        )
+        if mcp_config:
+            return mcp_config
+
+        return None
+
+    @classmethod
+    def load(cls) -> Optional[Dict[str, Any]]:
+        """
+        Load Jenkins settings from VS Code settings files.
+
+        Returns the first valid configuration found, or None.
+        """
+        for settings_path in cls.VSCODE_PATHS:
+            if not settings_path.exists():
+                continue
+
+            try:
+                logger.debug(f"Checking VS Code settings: {settings_path}")
+                content = settings_path.read_text(encoding='utf-8')
+                settings = cls.parse_jsonc(content)
+
+                jenkins_settings = cls.find_jenkins_settings(settings)
+                if jenkins_settings:
+                    logger.info(f"Loaded Jenkins settings from: {settings_path}")
+                    return jenkins_settings
+
+            except Exception as e:
+                logger.debug(f"Error reading {settings_path}: {e}")
+                continue
+
+        logger.debug("No Jenkins settings found in VS Code configuration")
+        return None
+
+
+def load_settings(
+        env_file: Optional[str] = None,
+        load_vscode: bool = True,
+        **override_values
+) -> JenkinsSettings:
+    """
+    Load Jenkins settings from all available sources.
+
+    Args:
+        env_file: Optional path to .env file (overrides default .env)
+        load_vscode: Whether to load from VS Code settings (default: True)
+        **override_values: Direct override values (highest priority)
+
+    Priority order:
+        1. override_values (passed as kwargs)
+        2. VS Code settings (if load_vscode=True)
+        3. Environment variables / .env file
+
+    Returns:
+        JenkinsSettings instance with merged configuration
+    """
+    # Start with environment variables and .env file
+    if env_file:
+        settings = JenkinsSettings(_env_file=env_file)
+    else:
+        settings = JenkinsSettings()
+
+    # Override with VS Code settings if requested
+    if load_vscode:
+        vscode_settings = VSCodeSettingsLoader.load()
+        if vscode_settings:
+            # Merge VS Code settings into our settings object
+            for key in ['url', 'username', 'password', 'token']:
+                vscode_value = vscode_settings.get(key)
+                if vscode_value is not None:
+                    setattr(settings, key, vscode_value)
+
+    # Apply direct overrides (highest priority)
+    for key, value in override_values.items():
+        if value is not None and hasattr(settings, key):
+            setattr(settings, key, value)
+
+    # Log final configuration
+    settings.log_config()
+
+    return settings
+
+
+# Factory function for backward compatibility
+def get_settings(
+        env_file: Optional[str] = None,
+        load_vscode: bool = True,
+        **kwargs
+) -> JenkinsSettings:
+    """
+    Get Jenkins settings instance.
+
+    This is the recommended way to obtain settings in the application.
+    Each call returns a fresh instance with current configuration.
+    """
+    return load_settings(env_file=env_file, load_vscode=load_vscode, **kwargs)
+
+
+# For backward compatibility with code that expects a global settings object
+# Note: This is lazily evaluated when first accessed
+_default_settings: Optional[JenkinsSettings] = None
+
+
+def get_default_settings() -> JenkinsSettings:
+    """Get or create the default settings instance (singleton pattern)"""
+    global _default_settings
+    if _default_settings is None:
+        _default_settings = load_settings()
+    return _default_settings
