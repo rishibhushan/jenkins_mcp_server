@@ -152,7 +152,12 @@ Add to your VS Code `settings.json`:
 
 ### Option 2: Environment File (.env)
 
-Create a `.env` file in your project directory:
+Rename `.env.template` to `.env`
+```bash
+cp .env.template .env
+```
+
+In the `.env` file in your project directory:
 
 ```bash
 JENKINS_URL=http://jenkins.example.com:8080
@@ -264,25 +269,23 @@ Options:
 
 ### VS Code MCP Client
 
-Add to your VS Code `settings.json`:
+Add to your VS Code `mcp.json`:
 
 ```json
 {
-  "mcp": {
-    "servers": {
-      "jenkins": {
-        "type": "stdio",
-        "command": "npx",
-        "args": [
-          "github:rishibhushan/jenkins_mcp_server"
-        ]
-      }
+  "servers": {
+    "jenkins": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "github:rishibhushan/jenkins_mcp_server"
+      ]
     }
   }
 }
 ```
 
-**With .env file and proxy settings:**
+Or `setting.json` with `.env` file and proxy settings:
 ```json
 {
   "mcp": {
@@ -317,7 +320,9 @@ Add to `claude_desktop_config.json`:
     "jenkins": {
       "command": "npx",
       "args": [
-        "github:rishibhushan/jenkins_mcp_server"
+        "github:rishibhushan/jenkins_mcp_server",
+        "--env-file",
+        "/path/to/.env"
       ]
     }
   }
