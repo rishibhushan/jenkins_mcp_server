@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jenkins-mcp-server"
+version = "0.1.0"
+description = "Jenkins MCP Server - control Jenkins via MCP tools"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+  { name = "Rishi Bhushan" }
+]
+requires-python = ">=3.10"
+
+dependencies = [
+  "requests>=2.0",
+  "python-jenkins>=1.0",
+  "python-json-logger>=2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+jenkins-mcp-server = "jenkins_mcp_server.__main__:main"

@@ -1,23 +1,51 @@
 {
   "name": "jenkins-mcp-server",
   "version": "1.0.0",
-  "description": "Jenkins MCP Server with Python backend",
+  "description": "AI-enabled Jenkins automation via Model Context Protocol (MCP)",
+  "main": "bin/jenkins-mcp.js",
   "bin": {
     "jenkins-mcp-server": "./bin/jenkins-mcp.js"
+  },
+  "scripts": {
+    "start": "node bin/jenkins-mcp.js",
+    "test": "python -m pytest tests/",
+    "build": "python -m build"
   },
   "files": [
     "bin/",
     "src/",
     "requirements.txt",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=14.0.0"
   },
-  "keywords": ["mcp", "jenkins", "ai", "automation"],
+  "keywords": [
+    "mcp",
+    "jenkins",
+    "ai",
+    "automation",
+    "ci-cd",
+    "devops",
+    "model-context-protocol",
+    "llm",
+    "chatgpt",
+    "claude"
+  ],
   "repository": {
     "type": "git",
-      "url": "https://github.com/rishibhushan/jenkins_mcp_server.git"
+    "url": "https://github.com/rishibhushan/jenkins_mcp_server.git"
   },
-  "license": "MIT"
+  "bugs": {
+    "url": "https://github.com/rishibhushan/jenkins_mcp_server/issues"
+  },
+  "homepage": "https://github.com/rishibhushan/jenkins_mcp_server#readme",
+  "author": "Rishi Bhushan",
+  "license": "MIT",
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ]
 }

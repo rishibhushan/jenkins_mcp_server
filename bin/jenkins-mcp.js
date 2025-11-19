@@ -1,169 +1,327 @@
 #!/usr/bin/env node
+/**
+ * Jenkins MCP Server - Node.js Wrapper
+ *
+ * This wrapper handles:
+ * - Python version detection (cross-platform)
+ * - Virtual environment creation
+ * - Dependency installation
+ * - Server execution
+ *
+ * Supports: Windows, macOS, Linux
+ */
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+// Configuration
 const projectRoot = path.join(__dirname, '..');
 const args = process.argv.slice(2);
+const isWindows = process.platform === 'win32';
 
+// Color codes for terminal output (if supported)
+const colors = {
+  reset: '\x1b[0m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  red: '\x1b[31m',
+  blue: '\x1b[34m'
+};
+
+function log(message, color = 'reset') {
+  const colorCode = process.stdout.isTTY ? colors[color] : '';
+  const resetCode = process.stdout.isTTY ? colors.reset : '';
+  console.log(`${colorCode}${message}${resetCode}`);
+}
+
+function error(message) {
+  console.error(`${colors.red}ERROR: ${message}${colors.reset}`);
+}
+
+/**
+ * Check for Python 3 installation
+ * @returns {string} Python command name
+ */
 function checkPython() {
-  const pythonCommands = process.platform === 'win32'
+  const pythonCommands = isWindows
     ? ['python', 'py', 'python3']
     : ['python3', 'python'];
 
+  log('Checking for Python 3...', 'blue');
+
   for (const cmd of pythonCommands) {
     try {
-      const result = require('child_process').spawnSync(cmd, ['--version'], {
+      const result = spawnSync(cmd, ['--version'], {
         stdio: 'pipe',
         encoding: 'utf-8'
       });
 
-      if (result.status === 0 && result.stdout.includes('Python 3')) {
-        return cmd;
+      if (result.status === 0) {
+        const output = result.stdout || result.stderr;
+        if (output.includes('Python 3')) {
+          const version = output.trim();
+          log(`✓ Found ${version}`, 'green');
+          return cmd;
+        }
       }
     } catch (e) {
+      // Command not found, try next
       continue;
     }
   }
 
-  console.error('Error: Python 3 is required but not found.');
-  console.error('Please install Python 3 from https://python.org');
+  error('Python 3 is required but not found.');
+  console.error('\nPlease install Python 3.8 or higher from:');
+  console.error('  https://www.python.org/downloads/');
+  console.error('\nAfter installation, restart your terminal and try again.');
   process.exit(1);
 }
 
-function setupVenv() {
-  const pythonCmd = checkPython();
-  const venvPath = path.join(projectRoot, '.venv');
-
-  if (!fs.existsSync(venvPath)) {
-    console.log('Creating Python virtual environment...');
-    const createVenv = require('child_process').spawnSync(
-      pythonCmd,
-      ['-m', 'venv', venvPath],
-      {
-        cwd: projectRoot,
-        stdio: 'inherit'
-      }
-    );
-
-    if (createVenv.status !== 0) {
-      console.error('Failed to create virtual environment');
-      process.exit(1);
-    }
-
-    installDependencies(pythonCmd, venvPath);
+/**
+ * Get paths for virtual environment binaries
+ * @param {string} venvPath - Path to virtual environment
+ * @returns {Object} Paths to python and pip executables
+ */
+function getVenvPaths(venvPath) {
+  if (isWindows) {
+    return {
+      python: path.join(venvPath, 'Scripts', 'python.exe'),
+      pip: path.join(venvPath, 'Scripts', 'pip.exe')
+    };
   } else {
-    // Check if dependencies are installed
-    const pipPath = process.platform === 'win32'
-      ? path.join(venvPath, 'Scripts', 'pip.exe')
-      : path.join(venvPath, 'bin', 'pip');
-
-    const check = require('child_process').spawnSync(
-      pipPath,
-      ['list'],
-      { stdio: 'pipe' }
-    );
-
-    if (!check.stdout.toString().includes('python-jenkins')) {
-      installDependencies(pythonCmd, venvPath);
-    } else {
-      runServer(pythonCmd, venvPath);
-    }
+    return {
+      python: path.join(venvPath, 'bin', 'python'),
+      pip: path.join(venvPath, 'bin', 'pip')
+    };
   }
 }
 
-function installDependencies(pythonCmd, venvPath) {
-  console.log('Installing Python dependencies...');
+/**
+ * Create virtual environment if it doesn't exist
+ * @param {string} pythonCmd - Python command to use
+ * @returns {string} Path to virtual environment
+ */
+function ensureVenv(pythonCmd) {
+  const venvPath = path.join(projectRoot, '.venv');
 
-  const pipPath = process.platform === 'win32'
-    ? path.join(venvPath, 'Scripts', 'pip.exe')
-    : path.join(venvPath, 'bin', 'pip');
+  if (fs.existsSync(venvPath)) {
+    log('✓ Virtual environment exists', 'green');
+    return venvPath;
+  }
 
-  const install = require('child_process').spawnSync(
-    pipPath,
-    ['install', '-r', path.join(projectRoot, 'requirements.txt')],
-    {
-      cwd: projectRoot,
-      stdio: 'inherit'
-    }
-  );
+  log('Creating Python virtual environment...', 'yellow');
 
-  if (install.status !== 0) {
-    console.error('Failed to install dependencies');
+  const result = spawnSync(pythonCmd, ['-m', 'venv', venvPath], {
+    cwd: projectRoot,
+    stdio: 'inherit'
+  });
+
+  if (result.status !== 0) {
+    error('Failed to create virtual environment');
+    console.error('\nTroubleshooting:');
+    console.error('  1. Ensure Python venv module is installed');
+    console.error('  2. Check disk space and permissions');
+    console.error('  3. Try manually: python3 -m venv .venv');
     process.exit(1);
   }
 
-  runServer(pythonCmd, venvPath);
+  log('✓ Virtual environment created', 'green');
+  return venvPath;
 }
 
-function runServer(pythonCmd, venvPath) {
-  const pythonPath = process.platform === 'win32'
-    ? path.join(venvPath, 'Scripts', 'python.exe')
-    : path.join(venvPath, 'bin', 'python');
+/**
+ * Check if dependencies are installed
+ * @param {string} pipPath - Path to pip executable
+ * @returns {boolean} True if dependencies are installed
+ */
+function dependenciesInstalled(pipPath) {
+  try {
+    const result = spawnSync(pipPath, ['list'], {
+      stdio: 'pipe',
+      encoding: 'utf-8'
+    });
 
-  // Determine the correct Python file to run
-  let pythonArgs;
-  const mainPyPath = path.join(projectRoot, 'src', 'jenkins_mcp_server', '__main__.py');
-  const serverPyPath = path.join(projectRoot, 'src', 'server.py');
-
-  // Set PYTHONPATH to include src directory
-  const env = {
-    ...process.env,
-    PYTHONPATH: path.join(projectRoot, 'src')
-  };
-
-  // Try different approaches based on your structure
-  if (fs.existsSync(mainPyPath)) {
-    // Option 1: Module with __main__.py
-    pythonArgs = ['-m', 'jenkins_mcp_server', ...args];
-  } else if (fs.existsSync(serverPyPath)) {
-    // Option 2: Direct script execution
-    pythonArgs = [serverPyPath, ...args];
-  } else {
-    // Option 3: Look for main entry point
-    const possibleEntries = [
-      path.join(projectRoot, 'src', 'main.py'),
-      path.join(projectRoot, 'src', 'jenkins_mcp_server.py'),
-      path.join(projectRoot, 'main.py')
-    ];
-
-    const entryPoint = possibleEntries.find(p => fs.existsSync(p));
-
-    if (!entryPoint) {
-      console.error('Error: Could not find Python entry point');
-      console.error('Please ensure one of these files exists:');
-      console.error('  - src/jenkins_mcp_server/__main__.py');
-      console.error('  - src/server.py');
-      console.error('  - src/main.py');
-      process.exit(1);
+    if (result.status === 0) {
+      const output = result.stdout || '';
+      // Check for key dependencies
+      return output.includes('python-jenkins') &&
+             output.includes('mcp') &&
+             output.includes('requests');
     }
+  } catch (e) {
+    // If we can't check, assume not installed
+  }
+  return false;
+}
 
-    pythonArgs = [entryPoint, ...args];
+/**
+ * Install Python dependencies
+ * @param {string} venvPath - Path to virtual environment
+ */
+function installDependencies(venvPath) {
+  const { pip } = getVenvPaths(venvPath);
+  const requirementsPath = path.join(projectRoot, 'requirements.txt');
+
+  if (!fs.existsSync(requirementsPath)) {
+    error('requirements.txt not found');
+    console.error(`Expected at: ${requirementsPath}`);
+    process.exit(1);
   }
 
-  console.log(`Starting Jenkins MCP Server...`);
+  log('Installing Python dependencies...', 'yellow');
+  log('This may take a minute...', 'blue');
 
-  const server = spawn(pythonPath, pythonArgs, {
+  const result = spawnSync(pip, ['install', '-r', requirementsPath], {
+    cwd: projectRoot,
+    stdio: 'inherit'
+  });
+
+  if (result.status !== 0) {
+    error('Failed to install dependencies');
+    console.error('\nTroubleshooting:');
+    console.error('  1. Check your internet connection');
+    console.error('  2. If behind a proxy, set HTTP_PROXY/HTTPS_PROXY env vars');
+    console.error('  3. Try manually: .venv/bin/pip install -r requirements.txt');
+    process.exit(1);
+  }
+
+  log('✓ Dependencies installed', 'green');
+}
+
+/**
+ * Find the Python entry point
+ * @returns {Object} Entry point information
+ */
+function findEntryPoint() {
+  const mainPyPath = path.join(projectRoot, 'src', 'jenkins_mcp_server', '__main__.py');
+
+  if (fs.existsSync(mainPyPath)) {
+    return {
+      type: 'module',
+      args: ['-m', 'jenkins_mcp_server']
+    };
+  }
+
+  // Fallback options
+  const fallbacks = [
+    path.join(projectRoot, 'src', 'jenkins_mcp_server', 'server.py'),
+    path.join(projectRoot, 'src', 'main.py'),
+    path.join(projectRoot, 'main.py')
+  ];
+
+  for (const filePath of fallbacks) {
+    if (fs.existsSync(filePath)) {
+      return {
+        type: 'script',
+        args: [filePath]
+      };
+    }
+  }
+
+  error('Could not find Python entry point');
+  console.error('\nExpected one of:');
+  console.error('  - src/jenkins_mcp_server/__main__.py (preferred)');
+  console.error('  - src/jenkins_mcp_server/server.py');
+  console.error('  - src/main.py');
+  process.exit(1);
+}
+
+/**
+ * Run the Jenkins MCP Server
+ * @param {string} venvPath - Path to virtual environment
+ */
+function runServer(venvPath) {
+  const { python } = getVenvPaths(venvPath);
+  const entryPoint = findEntryPoint();
+
+  // Set up environment
+  const env = {
+    ...process.env,
+    PYTHONPATH: path.join(projectRoot, 'src'),
+    PYTHONUNBUFFERED: '1'  // Ensure output is not buffered
+  };
+
+  const serverArgs = [...entryPoint.args, ...args];
+
+  log('Starting Jenkins MCP Server...', 'green');
+  log(`Command: ${python} ${serverArgs.join(' ')}`, 'blue');
+
+  const server = spawn(python, serverArgs, {
     cwd: projectRoot,
     stdio: 'inherit',
     env: env,
-    shell: process.platform === 'win32' // Use shell on Windows
+    shell: isWindows
   });
 
   server.on('error', (err) => {
-    console.error('Failed to start server:', err);
+    error(`Failed to start server: ${err.message}`);
     process.exit(1);
   });
 
   server.on('close', (code) => {
+    if (code !== 0 && code !== null) {
+      log(`Server exited with code ${code}`, 'yellow');
+    }
     process.exit(code || 0);
   });
 
-  // Handle cleanup
-  process.on('SIGINT', () => server.kill('SIGINT'));
-  process.on('SIGTERM', () => server.kill('SIGTERM'));
+  // Handle graceful shutdown
+  const cleanup = () => {
+    log('\nShutting down...', 'yellow');
+    server.kill('SIGTERM');
+  };
+
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
+
+  // Windows doesn't support SIGINT/SIGTERM the same way
+  if (isWindows) {
+    process.on('SIGBREAK', cleanup);
+  }
 }
 
-// Start
-setupVenv();
+/**
+ * Main execution flow
+ */
+function main() {
+  try {
+    // Check for help flag
+    if (args.includes('--help') || args.includes('-h')) {
+      console.log('Jenkins MCP Server - Node.js Wrapper');
+      console.log('\nUsage: jenkins-mcp-server [options]');
+      console.log('\nOptions:');
+      console.log('  --env-file PATH    Path to custom .env file');
+      console.log('  --verbose, -v      Enable verbose logging');
+      console.log('  --no-vscode        Skip loading VS Code settings');
+      console.log('  --version          Show version');
+      console.log('  --help, -h         Show this help message');
+      process.exit(0);
+    }
+
+    // Check Python availability
+    const pythonCmd = checkPython();
+
+    // Ensure virtual environment exists
+    const venvPath = ensureVenv(pythonCmd);
+
+    // Check and install dependencies if needed
+    const { pip } = getVenvPaths(venvPath);
+    if (!dependenciesInstalled(pip)) {
+      installDependencies(venvPath);
+    } else {
+      log('✓ Dependencies already installed', 'green');
+    }
+
+    // Run the server
+    runServer(venvPath);
+
+  } catch (err) {
+    error(`Unexpected error: ${err.message}`);
+    console.error(err.stack);
+    process.exit(1);
+  }
+}
+
+// Run main function
+main();

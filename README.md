@@ -25,7 +25,7 @@ This project includes:
 - 🔄 Automatic virtual environment creation + dependency installation
 - 🌐 Corporate proxy/certificate auto-detection support
 - 🪟 Windows, macOS, and Linux support
-- 🛠️ **20+ Jenkins management tools**
+- 🛠️ **20 Jenkins management tools**
 
 ### 🧩 Job Management Tools
 
@@ -538,7 +538,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Issues**: https://github.com/rishibhushan/jenkins_mcp_server/issues
 - **Discussions**: https://github.com/rishibhushan/jenkins_mcp_server/discussions
-- **Email**: rishibharat2007@gmail.com
 
 ---
 
