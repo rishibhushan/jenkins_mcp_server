@@ -353,8 +353,16 @@ async def handle_list_tools() -> list[types.Tool]:
         # Job Information
         types.Tool(
             name="list-jobs",
-            description="List all Jenkins jobs",
-            inputSchema={"type": "object", "properties": {}},
+            description="List all Jenkins jobs with optional filtering",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filter": {
+                        "type": "string",
+                        "description": "Filter jobs by name (case-insensitive partial match)"
+                    }
+                }
+            },
         ),
         types.Tool(
             name="get-job-details",
@@ -645,8 +653,17 @@ async def _tool_stop_build(client, args):
 # Job Information
 
 async def _tool_list_jobs(client, args):
-    """List all Jenkins jobs"""
+    """List all Jenkins jobs with optional filtering"""
     jobs = client.get_jobs()
+    filter_text = args.get("filter", "").strip()
+
+    # Apply filter if provided
+    if filter_text:
+        filter_lower = filter_text.lower()
+        jobs = [
+            job for job in jobs
+            if filter_lower in job.get("name", "").lower()
+        ]
 
     jobs_info = [
         {
@@ -657,10 +674,16 @@ async def _tool_list_jobs(client, args):
         for job in jobs
     ]
 
+    # Build response message
+    if filter_text:
+        message = f"Jenkins Jobs matching '{filter_text}' ({len(jobs_info)} found):\n\n{json.dumps(jobs_info, indent=2)}"
+    else:
+        message = f"Jenkins Jobs ({len(jobs_info)} total):\n\n{json.dumps(jobs_info, indent=2)}"
+
     return [
         types.TextContent(
             type="text",
-            text=f"Jenkins Jobs ({len(jobs_info)} total):\n\n{json.dumps(jobs_info, indent=2)}"
+            text=message
         )
     ]
 

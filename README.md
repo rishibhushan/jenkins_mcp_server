@@ -27,40 +27,49 @@ This project includes:
 - 🪟 Windows, macOS, and Linux support
 - 🛠️ **20 Jenkins management tools**
 
-### 🧩 Job Management Tools
+### 🧩 Build Operations
+| Tool Name | Description | Required Fields | Optional Fields |
+|---|---|---|---|
+| `trigger-build` | Trigger a Jenkins job build with optional parameters | `job_name` | `parameters` |
+| `stop-build` | Stop a running Jenkins build | `job_name`, `build_number` | *(none)* |
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `create-job` | Create a new job with XML config | `job_name`, `config_xml` |
-| `create-job-from-copy` | Clone an existing job | `new_job_name`, `source_job_name` |
-| `create-job-from-data` | Create job from structured data | `job_name`, `config_data` |
-| `delete-job` | Delete a job | `job_name` |
-| `enable-job` | Enable a disabled job | `job_name` |
-| `disable-job` | Disable a job | `job_name` |
-| `rename-job` | Rename a job | `job_name`, `new_name` |
-| `trigger-build` | Trigger a build (with optional params) | `job_name`, `parameters?` |
-| `stop-build` | Stop a running build | `job_name`, `build_number` |
+### 📊 Job Information
+| Tool Name | Description | Required Fields | Optional Fields |
+|---|---|---|---|
+| `list-jobs` | List all Jenkins jobs with optional filtering | *(none)* | `filter` |
+| `get-job-details` | Get detailed information about a Jenkins job | `job_name` | *(none)* |
 
-### 📊 Information & Monitoring Tools
+### 🛠️ Build Information
+| Tool Name | Description | Required Fields | Optional Fields |
+|---|---|---|---|
+| `get-build-info` | Get information about a specific build | `job_name`, `build_number` | *(none)* |
+| `get-build-console` | Get console output from a build | `job_name`, `build_number` | *(none)* |
+| `get-last-build-number` | Get the last build number for a job | `job_name` | *(none)* |
+| `get-last-build-timestamp` | Get the timestamp of the last build | `job_name` | *(none)* |
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `list-jobs` | List all Jenkins jobs | *(none)* |
-| `get-job-details` | Get detailed job information | `job_name` |
-| `get-build-info` | Get specific build information | `job_name`, `build_number` |
-| `get-build-console` | Retrieve console output/logs | `job_name`, `build_number` |
-| `get-last-build-number` | Get latest build number | `job_name` |
-| `get-last-build-timestamp` | Get last build timestamp | `job_name` |
-| `get-queue-info` | Inspect the build queue | *(none)* |
-| `list-nodes` | List all Jenkins nodes/agents | *(none)* |
-| `get-node-info` | Get node/agent information | `node_name` |
+### 🧩 Job Management
+| Tool Name | Description | Required Fields | Optional Fields |
+|---|---|---|---|
+| `create-job` | Create a new Jenkins job with XML configuration | `job_name`, `config_xml` | *(none)* |
+| `create-job-from-copy` | Create a new job by copying an existing one | `new_job_name`, `source_job_name` | *(none)* |
+| `create-job-from-data` | Create a job from structured data (auto-generated XML) | `job_name`, `config_data` | `root_tag` |
+| `delete-job` | Delete an existing job | `job_name` | *(none)* |
+| `enable-job` | Enable a disabled Jenkins job | `job_name` | *(none)* |
+| `disable-job` | Disable a Jenkins job | `job_name` | *(none)* |
+| `rename-job` | Rename an existing Jenkins job | `job_name`, `new_name` | *(none)* |
 
-### ⚙️ Configuration Tools
+### ⚙️ Job Configuration
+| Tool Name | Description | Required Fields | Optional Fields |
+|---|---|---|---|
+| `get-job-config` | Fetch job XML configuration | `job_name` | *(none)* |
+| `update-job-config` | Update job XML configuration | `job_name`, `config_xml` | *(none)* |
 
-| Tool | Description | Parameters |
-|------|-------------|------------|
-| `get-job-config` | Fetch job configuration XML | `job_name` |
-| `update-job-config` | Update job configuration XML | `job_name`, `config_xml` |
+### 🖥️ System Information
+| Tool Name | Description | Required Fields | Optional Fields |
+|---|---|---|---|
+| `get-queue-info` | Get Jenkins build queue info | *(none)* | *(none)* |
+| `list-nodes` | List all Jenkins nodes | *(none)* | *(none)* |
+| `get-node-info` | Get information about a Jenkins node | `node_name` | *(none)* |
 
 ---
 
@@ -344,6 +353,8 @@ Once configured, you can use natural language with your MCP client:
 
 ```
 "List all Jenkins jobs"
+"List jobs with 'backend' in the name"  - # Filter jobs containing "backend"
+"Show me all production jobs"  - # Filter jobs containing "prod"
 "Show me the last build of my-project"
 "Trigger a build for deploy-prod with parameter env=production"
 "What's in the build queue?"
@@ -365,9 +376,12 @@ settings = get_settings()
 client = get_jenkins_client(settings)
 
 # List jobs
-jobs = client.get_jobs()
-for job in jobs:
+all_jobs = client.get_jobs()
+for job in all_jobs:
     print(f"Job: {job['name']} - Status: {job['color']}")
+
+# Filter in Python
+backend_jobs = [job for job in all_jobs if 'backend' in job['name'].lower()]
 
 # Trigger a build
 result = client.build_job(
