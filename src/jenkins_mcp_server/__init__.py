@@ -34,6 +34,8 @@ def main():
 
     Parses command-line arguments, configures settings, and starts the server.
     """
+
+    print("=== Jenkins MCP Server: Entry point called ===", file=sys.stderr, flush=True)
     parser = argparse.ArgumentParser(
         description='Jenkins MCP Server - AI-enabled Jenkins automation',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -82,20 +84,26 @@ Configuration Priority:
         help='Skip loading settings from VS Code (use only .env/environment)'
     )
 
+    print("=== Parsing arguments ===", file=sys.stderr, flush=True)
     args = parser.parse_args()
+    print(f"=== Args parsed: env_file={args.env_file}, verbose={args.verbose} ===", file=sys.stderr, flush=True)
 
     # Setup logging first
+    print("=== Setting up logging ===", file=sys.stderr, flush=True)
     setup_logging(args.verbose)
     logger = logging.getLogger(__name__)
+    print("=== Logging configured ===", file=sys.stderr, flush=True)
 
     try:
         # Load settings based on arguments
+        print("=== Loading Jenkins configuration ===", file=sys.stderr, flush=True)
         logger.info("Loading Jenkins configuration...")
 
         settings = get_settings(
             env_file=args.env_file,
             load_vscode=not args.no_vscode
         )
+        print(f"=== Settings loaded: url={settings.url}, configured={settings.is_configured} ===", file=sys.stderr, flush=True)
 
         # Validate configuration
         if not settings.is_configured:
@@ -109,22 +117,30 @@ Configuration Priority:
             sys.exit(1)
 
         # Log configuration summary
+        print("=== Configuration validated ===", file=sys.stderr, flush=True)
         logger.info(f"Jenkins server: {settings.url}")
         logger.info(f"Username: {settings.username}")
         logger.info(f"Authentication: {settings.auth_method}")
 
         # Pass settings to server module
+        print("=== Setting server settings ===", file=sys.stderr, flush=True)
         server.set_jenkins_settings(settings)
+        print("=== Server settings configured ===", file=sys.stderr, flush=True)
 
         # Run the server
+        print("=== Starting asyncio server ===", file=sys.stderr, flush=True)
         logger.info("Starting Jenkins MCP Server...")
         asyncio.run(server.main())
 
     except KeyboardInterrupt:
+        print("=== Server stopped by user ===", file=sys.stderr, flush=True)
         logger.info("Server stopped by user")
         sys.exit(0)
     except Exception as e:
+        print(f"=== EXCEPTION: {e} ===", file=sys.stderr, flush=True)
         logger.error(f"Failed to start server: {e}", exc_info=args.verbose)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
 

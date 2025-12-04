@@ -223,15 +223,25 @@ def load_settings(
     Returns:
         JenkinsSettings instance with merged configuration
     """
+    import sys
+    print(f"=== config.load_settings called: env_file={env_file}, load_vscode={load_vscode} ===", file=sys.stderr,
+          flush=True)
+
     # Start with environment variables and .env file
     if env_file:
+        print(f"=== Using custom env file: {env_file} ===", file=sys.stderr, flush=True)
         settings = JenkinsSettings(_env_file=env_file)
     else:
+        print("=== Using default .env ===", file=sys.stderr, flush=True)
         settings = JenkinsSettings()
+
+    print(f"=== Initial settings: url={settings.url} ===", file=sys.stderr, flush=True)
 
     # Override with VS Code settings if requested
     if load_vscode:
+        print("=== Loading VS Code settings ===", file=sys.stderr, flush=True)
         vscode_settings = VSCodeSettingsLoader.load()
+        print(f"=== VS Code settings loaded: {vscode_settings is not None} ===", file=sys.stderr, flush=True)
         if vscode_settings:
             # Merge VS Code settings into our settings object
             for key in ['url', 'username', 'password', 'token']:
@@ -240,11 +250,14 @@ def load_settings(
                     setattr(settings, key, vscode_value)
 
     # Apply direct overrides (highest priority)
+    print("=== Applying overrides ===", file=sys.stderr, flush=True)
     for key, value in override_values.items():
         if value is not None and hasattr(settings, key):
             setattr(settings, key, value)
 
     # Log final configuration
+    print(f"=== Final settings: url={settings.url}, configured={settings.is_configured} ===", file=sys.stderr,
+          flush=True)
     settings.log_config()
 
     return settings
