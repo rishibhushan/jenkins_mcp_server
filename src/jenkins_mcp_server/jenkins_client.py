@@ -67,25 +67,27 @@ class JenkinsClient:
         self._test_connection()
 
     def _test_connection(self) -> None:
-        """Test connection to Jenkins server"""
+        """Test connection to Jenkins server (with quick timeout for MCP)"""
         try:
+            # Quick connection test with short timeout for MCP compatibility
             response = requests.get(
                 f"{self.base_url}/api/json",
                 auth=self.auth,
                 verify=False,
-                timeout=10
+                timeout=3  # Short timeout for responsiveness
             )
             response.raise_for_status()
 
             data = response.json()
             logger.info(f"Connected to Jenkins: {self.base_url}")
-            logger.info(f"Jenkins version: {data.get('_class', 'unknown')}")
-            logger.debug(f"Found {len(data.get('jobs', []))} jobs")
+            logger.debug(f"Jenkins version: {data.get('_class', 'unknown')}")
 
+        except requests.Timeout:
+            logger.warning(f"Connection to Jenkins timed out (server may be slow)")
+            # Don't fail - let actual operations fail if there's a real problem
         except requests.RequestException as e:
-            raise JenkinsConnectionError(
-                f"Failed to connect to Jenkins at {self.base_url}: {e}"
-            ) from e
+            logger.warning(f"Could not verify Jenkins connection: {e}")
+            # Don't fail - let actual operations fail if there's a real problem
 
     @property
     def server(self) -> jenkins.Jenkins:
