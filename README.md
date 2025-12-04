@@ -210,35 +210,36 @@ Settings are loaded in this order (later overrides earlier):
 
 ---
 
-## 🎯 Running the Server
+## 🚀 Installation/Running the Server
 
-### Method 1: Using npx (Recommended - Zero Setup)
-
-**With VS Code settings:**
+### Option 1: Using npx (No Installation Required)
 ```bash
-npx github:rishibhushan/jenkins_mcp_server
+npx @rishibhushan/jenkins-mcp-server --env-file .env
 ```
 
-**With custom .env file:**
+### Option 2: Global Installation
 ```bash
-npx github:rishibhushan/jenkins_mcp_server --env-file /path/to/.env
+# Install globally
+npm install -g @rishibhushan/jenkins-mcp-server
+
+# Run
+jenkins-mcp-server --env-file .env
 ```
 
-**With verbose logging:**
+### Option 3: From GitHub
 ```bash
-npx github:rishibhushan/jenkins_mcp_server --verbose
+npx github:rishibhushan/jenkins_mcp_server --env-file .env
 ```
 
-**Skip VS Code settings:**
-```bash
-npx github:rishibhushan/jenkins_mcp_server --no-vscode
-```
+[//]: # ([![npm version]&#40;https://badge.fury.io/js/jenkins-mcp-server.svg&#41;]&#40;https://www.npmjs.com/package/@rishibhushan/jenkins-mcp-server&#41;)
+
+[//]: # ([![npm downloads]&#40;https://img.shields.io/npm/dm/jenkins-mcp-server.svg&#41;]&#40;https://www.npmjs.com/package/@rishibhushan/jenkins-mcp-server&#41;)
+
+---
 
 This automatically:
-- ✅ Detects Python 3 installation
-- ✅ Creates isolated virtual environment (`.venv`)
 - ✅ Installs all dependencies
-- ✅ Starts the MCP server
+- ✅ Starts the Jenkins MCP server
 
 ### Method 2: Direct Python Execution
 
@@ -287,7 +288,7 @@ Add to your VS Code `mcp.json`:
       "type": "stdio",
       "command": "npx",
       "args": [
-        "github:rishibhushan/jenkins_mcp_server"
+        "@rishibhushan/jenkins-mcp-server"
       ]
     }
   }
@@ -303,7 +304,7 @@ Or `setting.json` with `.env` file and proxy settings:
         "type": "stdio",
         "command": "npx",
         "args": [
-          "github:rishibhushan/jenkins_mcp_server",
+          "@rishibhushan/jenkins-mcp-server",
           "--verbose",
           "--env-file",
           "/path/to/.env"
@@ -329,7 +330,7 @@ Add to `claude_desktop_config.json`:
     "jenkins": {
       "command": "npx",
       "args": [
-        "github:rishibhushan/jenkins_mcp_server",
+        "@rishibhushan/jenkins-mcp-server",
         "--env-file",
         "/path/to/.env"
       ]
