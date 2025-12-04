@@ -4,7 +4,7 @@
   "description": "AI-enabled Jenkins automation via Model Context Protocol (MCP)",
   "main": "bin/jenkins-mcp.js",
   "bin": {
-    "jenkins-mcp-server": "./bin/jenkins-mcp.js"
+    "jenkins-mcp-server": "bin/jenkins-mcp.js"
   },
   "scripts": {
     "start": "node bin/jenkins-mcp.js",
@@ -35,7 +35,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/rishibhushan/jenkins_mcp_server.git"
+    "url": "git+https://github.com/rishibhushan/jenkins_mcp_server.git"
   },
   "bugs": {
     "url": "https://github.com/rishibhushan/jenkins_mcp_server/issues"

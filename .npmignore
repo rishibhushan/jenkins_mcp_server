@@ -1,9 +1,48 @@
+# Test files
+tests/
+*.test.js
+*.spec.js
+
+# Development files
 .venv/
 .npx_venv/
+.env
+.env.*
 __pycache__/
 *.pyc
-.env
+*.pyo
+*.pyd
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
 .git/
+.gitignore
+.gitattributes
+
+# CI/CD
 .github/
-tests/
+.gitlab-ci.yml
+.travis.yml
+
+# Documentation (keep README.md)
+docs/
+*.md
+!README.md
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Logs
 *.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
