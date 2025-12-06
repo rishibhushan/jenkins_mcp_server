@@ -346,6 +346,72 @@ Add to `claude_desktop_config.json`:
 
 ---
 
+## 🏢 Corporate Network / Proxy Setup
+
+If you're behind a corporate proxy or firewall:
+
+### Option 1: Set Environment Variables (Recommended)
+```bash
+# Set proxy environment variables
+export HTTP_PROXY=http://your-proxy:8080
+export HTTPS_PROXY=http://your-proxy:8080
+export NO_PROXY=localhost,127.0.0.1
+
+# Run the server (wrapper will auto-detect proxy)
+npx @rishibhushan/jenkins-mcp-server --env-file .env
+```
+
+### Option 2: Configure npm and pip
+```bash
+# Configure npm proxy
+npm config set proxy http://your-proxy:8080
+npm config set https-proxy http://your-proxy:8080
+
+# Configure pip proxy (for SSL issues)
+pip config set global.proxy http://your-proxy:8080
+pip config set global.trusted-host "pypi.org pypi.python.org files.pythonhosted.org"
+
+# Run the server
+npx @rishibhushan/jenkins-mcp-server --env-file .env
+```
+
+### Option 3: Claude Desktop with Proxy
+
+Add proxy settings to your `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "npx",
+      "args": [
+        "@rishibhushan/jenkins-mcp-server",
+        "--env-file",
+        "/path/to/.env"
+      ],
+      "env": {
+        "HTTP_PROXY": "http://your-proxy:8080",
+        "HTTPS_PROXY": "http://your-proxy:8080",
+        "NO_PROXY": "localhost,127.0.0.1"
+      }
+    }
+  }
+}
+```
+
+### SSL Certificate Issues
+
+If you encounter SSL certificate errors:
+```bash
+# Disable SSL verification for pip (one-time setup)
+pip config set global.trusted-host "pypi.org pypi.python.org files.pythonhosted.org"
+
+# Or use environment variable
+export PIP_TRUSTED_HOST="pypi.org pypi.python.org files.pythonhosted.org"
+```
+
+The Node.js wrapper automatically handles SSL certificate issues when it detects proxy environment variables.
+
+---
 ## 💡 Usage Examples
 
 ### Natural Language Commands

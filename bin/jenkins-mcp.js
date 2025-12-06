@@ -172,13 +172,36 @@ function installDependencies(venvPath) {
   log('Installing Python dependencies...', 'yellow');
   log('This may take a minute...', 'blue');
 
-  const result = spawnSync(pip, ['install', '-r', requirementsPath], {
+  // Build pip install command with proxy-friendly options
+  const pipArgs = ['install', '-r', requirementsPath];
+
+  // Add proxy-friendly options to handle corporate networks
+  const proxyFriendlyArgs = [
+    '--trusted-host', 'pypi.org',
+    '--trusted-host', 'pypi.python.org',
+    '--trusted-host', 'files.pythonhosted.org'
+  ];
+
+  // Add proxy if environment variable is set
+  const proxy = process.env.HTTP_PROXY || process.env.http_proxy ||
+                process.env.HTTPS_PROXY || process.env.https_proxy;
+
+  if (proxy) {
+    log(`Using proxy: ${proxy}`, 'blue');
+    pipArgs.push('--proxy', proxy);
+  }
+
+  // Add all proxy-friendly args
+  pipArgs.push(...proxyFriendlyArgs);
+
+  // Install requirements
+  const installReqs = spawnSync(pip, pipArgs, {
     cwd: projectRoot,
     stdio: 'inherit'
   });
 
-  if (result.status !== 0) {
-    error('Failed to install dependencies');
+  if (installReqs.status !== 0) {
+    error('Failed to install dependencies from requirements.txt');
     console.error('\nTroubleshooting:');
     console.error('  1. Check your internet connection');
     console.error('  2. If behind a proxy, set HTTP_PROXY/HTTPS_PROXY env vars');
@@ -186,7 +209,33 @@ function installDependencies(venvPath) {
     process.exit(1);
   }
 
-  log('✓ Dependencies installed', 'green');
+  log('✓ Requirements installed', 'green');
+
+  // Install the package itself in editable mode
+  log('Installing jenkins-mcp-server package...', 'yellow');
+
+  const packageArgs = ['install', '-e', '.'];
+
+  // Add same proxy-friendly options
+  if (proxy) {
+    packageArgs.push('--proxy', proxy);
+  }
+  packageArgs.push(...proxyFriendlyArgs);
+
+  const installPkg = spawnSync(pip, packageArgs, {
+    cwd: projectRoot,
+    stdio: 'inherit'
+  });
+
+  if (installPkg.status !== 0) {
+    error('Failed to install jenkins-mcp-server package');
+    console.error('\nTroubleshooting:');
+    console.error('  1. Ensure pyproject.toml or setup.py exists');
+    console.error('  2. Try manually: .venv/bin/pip install -e .');
+    process.exit(1);
+  }
+
+  log('✓ Package installed', 'green');
 }
 
 /**
