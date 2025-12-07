@@ -30,9 +30,10 @@ const colors = {
 };
 
 function log(message, color = 'reset') {
-  const colorCode = process.stdout.isTTY ? colors[color] : '';
-  const resetCode = process.stdout.isTTY ? colors.reset : '';
-  console.log(`${colorCode}${message}${resetCode}`);
+  const colorCode = process.stderr.isTTY ? colors[color] : '';
+  const resetCode = process.stderr.isTTY ? colors.reset : '';
+  // CRITICAL: Use stderr for all output, stdout is for JSON-RPC only
+  console.error(`${colorCode}${message}${resetCode}`);
 }
 
 function error(message) {
@@ -288,27 +289,43 @@ function runServer(venvPath) {
   const env = {
     ...process.env,
     PYTHONPATH: path.join(projectRoot, 'src'),
-    PYTHONUNBUFFERED: '1'  // Ensure output is not buffered
+    PYTHONUNBUFFERED: '1'
   };
 
   const serverArgs = [...entryPoint.args, ...args];
 
+  // All logging to stderr (stdout reserved for JSON-RPC)
+  console.error('=== NODE WRAPPER DEBUG ===');
+  console.error('Project root:', projectRoot);
+  console.error('Python path:', python);
+  console.error('Entry point:', entryPoint);
+  console.error('Server args:', serverArgs);
+  console.error('PYTHONPATH:', env.PYTHONPATH);
+  console.error('=== ATTEMPTING TO START PYTHON ===');
+
   log('Starting Jenkins MCP Server...', 'green');
   log(`Command: ${python} ${serverArgs.join(' ')}`, 'blue');
 
+  // CRITICAL: stdin=pipe, stdout=inherit (for JSON-RPC), stderr=inherit (for logs)
   const server = spawn(python, serverArgs, {
     cwd: projectRoot,
-    stdio: 'inherit',
+    stdio: ['pipe', 'inherit', 'inherit'],
     env: env,
     shell: isWindows
   });
 
   server.on('error', (err) => {
+    console.error('=== SPAWN ERROR ===', err);
     error(`Failed to start server: ${err.message}`);
     process.exit(1);
   });
 
-  server.on('close', (code) => {
+  server.on('spawn', () => {
+    console.error('=== PYTHON PROCESS SPAWNED ===');
+  });
+
+  server.on('close', (code, signal) => {
+    console.error(`=== PYTHON PROCESS CLOSED: code=${code}, signal=${signal} ===`);
     if (code !== 0 && code !== null) {
       log(`Server exited with code ${code}`, 'yellow');
     }
@@ -337,14 +354,14 @@ function main() {
   try {
     // Check for help flag
     if (args.includes('--help') || args.includes('-h')) {
-      console.log('Jenkins MCP Server - Node.js Wrapper');
-      console.log('\nUsage: jenkins-mcp-server [options]');
-      console.log('\nOptions:');
-      console.log('  --env-file PATH    Path to custom .env file');
-      console.log('  --verbose, -v      Enable verbose logging');
-      console.log('  --no-vscode        Skip loading VS Code settings');
-      console.log('  --version          Show version');
-      console.log('  --help, -h         Show this help message');
+      console.error('Jenkins MCP Server - Node.js Wrapper');
+      console.error('\nUsage: jenkins-mcp-server [options]');
+      console.error('\nOptions:');
+      console.error('  --env-file PATH    Path to custom .env file');
+      console.error('  --verbose, -v      Enable verbose logging');
+      console.error('  --no-vscode        Skip loading VS Code settings');
+      console.error('  --version          Show version');
+      console.error('  --help, -h         Show this help message');
       process.exit(0);
     }
 
