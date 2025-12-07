@@ -15,6 +15,7 @@
     "bin/",
     "src/",
     "requirements.txt",
+    "wheels/",
     "README.md",
     "LICENSE"
   ],

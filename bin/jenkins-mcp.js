@@ -162,66 +162,63 @@ function dependenciesInstalled(pipPath) {
  */
 function installDependencies(venvPath) {
   const { pip } = getVenvPaths(venvPath);
+  const wheelsPath = path.join(projectRoot, 'wheels');
   const requirementsPath = path.join(projectRoot, 'requirements.txt');
 
-  if (!fs.existsSync(requirementsPath)) {
-    error('requirements.txt not found');
-    console.error(`Expected at: ${requirementsPath}`);
-    process.exit(1);
+  console.error('Installing Python dependencies...');
+
+  // Check if wheels directory exists (pre-packaged wheels)
+  if (fs.existsSync(wheelsPath)) {
+    console.error('Using pre-packaged wheels (no internet required)...');
+
+    // Install from local wheels (fast, no network needed)
+    const installReqs = spawnSync(pip, [
+      'install',
+      '--no-index',  // Don't use PyPI
+      '--find-links', wheelsPath,  // Use local wheels
+      '-r', requirementsPath
+    ], {
+      cwd: projectRoot,
+      stdio: 'inherit'
+    });
+
+    if (installReqs.status !== 0) {
+      error('Failed to install from wheels');
+      process.exit(1);
+    }
+  } else {
+    // Fallback to normal install with proxy support
+    console.error('Downloading from PyPI...');
+    const pipArgs = ['install', '-r', requirementsPath];
+
+    const proxyFriendlyArgs = [
+      '--trusted-host', 'pypi.org',
+      '--trusted-host', 'pypi.python.org',
+      '--trusted-host', 'files.pythonhosted.org'
+    ];
+
+    const proxy = process.env.HTTP_PROXY || process.env.http_proxy;
+    if (proxy) {
+      pipArgs.push('--proxy', proxy);
+    }
+    pipArgs.push(...proxyFriendlyArgs);
+
+    const installReqs = spawnSync(pip, pipArgs, {
+      cwd: projectRoot,
+      stdio: 'inherit'
+    });
+
+    if (installReqs.status !== 0) {
+      error('Failed to install dependencies');
+      process.exit(1);
+    }
   }
 
-  log('Installing Python dependencies...', 'yellow');
-  log('This may take a minute...', 'blue');
+  console.error('✓ Requirements installed');
 
-  // Build pip install command with proxy-friendly options
-  const pipArgs = ['install', '-r', requirementsPath];
-
-  // Add proxy-friendly options to handle corporate networks
-  const proxyFriendlyArgs = [
-    '--trusted-host', 'pypi.org',
-    '--trusted-host', 'pypi.python.org',
-    '--trusted-host', 'files.pythonhosted.org'
-  ];
-
-  // Add proxy if environment variable is set
-  const proxy = process.env.HTTP_PROXY || process.env.http_proxy ||
-                process.env.HTTPS_PROXY || process.env.https_proxy;
-
-  if (proxy) {
-    log(`Using proxy: ${proxy}`, 'blue');
-    pipArgs.push('--proxy', proxy);
-  }
-
-  // Add all proxy-friendly args
-  pipArgs.push(...proxyFriendlyArgs);
-
-  // Install requirements
-  const installReqs = spawnSync(pip, pipArgs, {
-    cwd: projectRoot,
-    stdio: 'inherit'
-  });
-
-  if (installReqs.status !== 0) {
-    error('Failed to install dependencies from requirements.txt');
-    console.error('\nTroubleshooting:');
-    console.error('  1. Check your internet connection');
-    console.error('  2. If behind a proxy, set HTTP_PROXY/HTTPS_PROXY env vars');
-    console.error('  3. Try manually: .venv/bin/pip install -r requirements.txt');
-    process.exit(1);
-  }
-
-  log('✓ Requirements installed', 'green');
-
-  // Install the package itself in editable mode
-  log('Installing jenkins-mcp-server package...', 'yellow');
-
+  // Install package itself
+  console.error('Installing jenkins-mcp-server package...');
   const packageArgs = ['install', '-e', '.'];
-
-  // Add same proxy-friendly options
-  if (proxy) {
-    packageArgs.push('--proxy', proxy);
-  }
-  packageArgs.push(...proxyFriendlyArgs);
 
   const installPkg = spawnSync(pip, packageArgs, {
     cwd: projectRoot,
@@ -229,14 +226,11 @@ function installDependencies(venvPath) {
   });
 
   if (installPkg.status !== 0) {
-    error('Failed to install jenkins-mcp-server package');
-    console.error('\nTroubleshooting:');
-    console.error('  1. Ensure pyproject.toml or setup.py exists');
-    console.error('  2. Try manually: .venv/bin/pip install -e .');
+    error('Failed to install package');
     process.exit(1);
   }
 
-  log('✓ Package installed', 'green');
+  console.error('✓ Package installed');
 }
 
 /**
