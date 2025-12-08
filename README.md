@@ -4,6 +4,7 @@
 
 Designed to work seamlessly with automation clients such as:
 - 🖥️ **VS Code MCP** - Direct integration with Claude in VS Code
+- 🖥️ **Claude Desktop** - AI-powered Jenkins automation
 - 🔌 **Any MCP-compatible client** - Universal compatibility
 
 ## ✨ About codebase
@@ -230,10 +231,6 @@ jenkins-mcp-server --env-file .env
 ```bash
 npx github:rishibhushan/jenkins_mcp_server --env-file .env
 ```
-
-[//]: # ([![npm version]&#40;https://badge.fury.io/js/jenkins-mcp-server.svg&#41;]&#40;https://www.npmjs.com/package/@rishibhushan/jenkins-mcp-server&#41;)
-
-[//]: # ([![npm downloads]&#40;https://img.shields.io/npm/dm/jenkins-mcp-server.svg&#41;]&#40;https://www.npmjs.com/package/@rishibhushan/jenkins-mcp-server&#41;)
 
 ---
 
@@ -471,13 +468,15 @@ if result['build_number']:
 
 ## 🔧 Troubleshooting
 
-### Python Not Found
+### Common Issues
+
+#### Python Not Found
 ```
 Error: Python 3 is required but not found.
 ```
 **Solution**: Install Python 3.8+ from https://www.python.org/downloads/
 
-### Configuration Issues
+#### Configuration Issues
 ```
 ERROR: Jenkins configuration is incomplete!
 ```
@@ -495,7 +494,7 @@ env | grep JENKINS
 cat ~/.config/Code/User/settings.json | grep jenkins
 ```
 
-### Connection Failed
+#### Connection Failed
 ```
 Failed to connect to Jenkins at http://localhost:8080
 ```
@@ -505,7 +504,7 @@ Failed to connect to Jenkins at http://localhost:8080
 3. Verify URL is correct (include port if needed)
 4. Test authentication credentials
 
-### Dependency Installation Failed
+#### Dependency Installation Failed
 ```
 Failed to install dependencies
 ```
@@ -513,6 +512,395 @@ Failed to install dependencies
 1. Check internet connection
 2. If behind a proxy, set `HTTP_PROXY` and `HTTPS_PROXY` environment variables
 3. Try manual installation: `.venv/bin/pip install -r requirements.txt`
+
+---
+
+### 🚨 VPN & Corporate Network Issues
+
+If you're experiencing timeout issues with Claude Desktop or other MCP clients when using a VPN or corporate network, this section provides step-by-step solutions.
+
+#### Symptom: Request Timeout After 60 Seconds
+
+**Error in logs:**
+```
+McpError: MCP error -32001: Request timed out
+Server transport closed unexpectedly
+```
+
+**Root Cause**: The Python process spawned by `npx` may not properly inherit VPN network routing, causing it to fail when connecting to internal Jenkins servers.
+
+---
+
+### Solution 1: Bypass Proxy for PyPI (For Dependency Installation Issues)
+
+If you're getting proxy errors during dependency installation:
+
+**Add to your `claude_desktop_config.json`:**
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "npx",
+      "args": [
+        "@rishibhushan/jenkins-mcp-server",
+        "--env-file",
+        "/path/to/.env"
+      ],
+      "env": {
+        "NO_PROXY": "pypi.org,pypi.python.org,files.pythonhosted.org",
+        "PIP_NO_PROXY": "pypi.org,pypi.python.org,files.pythonhosted.org"
+      }
+    }
+  }
+}
+```
+
+---
+
+### Solution 2: Use Direct Python Execution (Recommended for VPN)
+
+This bypasses the `npx` wrapper entirely and uses Python directly, which properly inherits your system's network routing.
+
+#### Step 1: Locate the Installed Package
+
+**For macOS/Linux:**
+```bash
+# Find the npx cache directory
+PACKAGE_DIR=$(find ~/.npm/_npx -name "jenkins-mcp-server" -type d 2>/dev/null | head -1)
+echo $PACKAGE_DIR
+```
+
+**For Windows (PowerShell):**
+```powershell
+# Find the npx cache directory
+$PACKAGE_DIR = Get-ChildItem -Path "$env:LOCALAPPDATA\npm-cache\_npx" -Recurse -Directory -Filter "jenkins-mcp-server" | Select-Object -First 1 -ExpandProperty FullName
+Write-Host $PACKAGE_DIR
+```
+
+The output will be something like:
+- **macOS/Linux**: `/Users/username/.npm/_npx/<hash>/node_modules/@rishibhushan/jenkins-mcp-server`
+- **Windows**: `C:\Users\username\AppData\Local\npm-cache\_npx\<hash>\node_modules\@rishibhushan\jenkins-mcp-server`
+
+#### Step 2: Update Claude Desktop Configuration
+
+Replace `<PACKAGE_DIR>` with the path from Step 1:
+
+**macOS/Linux:**
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "<PACKAGE_DIR>/.venv/bin/python",
+      "args": [
+        "-m",
+        "jenkins_mcp_server",
+        "--env-file",
+        "/path/to/your/.env"
+      ],
+      "env": {
+        "PYTHONPATH": "<PACKAGE_DIR>/src"
+      }
+    }
+  }
+}
+```
+
+**Windows:**
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "<PACKAGE_DIR>\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "jenkins_mcp_server",
+        "--env-file",
+        "C:\\path\\to\\your\\.env"
+      ],
+      "env": {
+        "PYTHONPATH": "<PACKAGE_DIR>\\src"
+      }
+    }
+  }
+}
+```
+
+#### Step 3: Example Configuration
+
+**Complete example for macOS:**
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "/Users/username/.npm/_npx/a88b5f55f40c4229/node_modules/@rishibhushan/jenkins-mcp-server/.venv/bin/python",
+      "args": [
+        "-m",
+        "jenkins_mcp_server",
+        "--env-file",
+        "/Users/username/projects/jenkins_mcp_server/.env"
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/username/.npm/_npx/a88b5f55f40c4229/node_modules/@rishibhushan/jenkins-mcp-server/src"
+      }
+    }
+  }
+}
+```
+
+#### Step 4: Restart Claude Desktop
+
+1. **Connect to your VPN first**
+2. Quit Claude Desktop completely
+3. Start Claude Desktop
+4. Check the MCP server connection in settings
+
+---
+
+### Solution 3: Use Local Git Clone (Best for Development)
+
+If you're developing or frequently updating, use a local clone:
+
+#### Step 1: Clone and Setup
+```bash
+# Clone the repository
+git clone https://github.com/rishibhushan/jenkins_mcp_server.git
+cd jenkins_mcp_server
+
+# Create virtual environment and install dependencies
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+#### Step 2: Configure Claude Desktop
+
+**macOS/Linux:**
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "/path/to/jenkins_mcp_server/.venv/bin/python",
+      "args": [
+        "-m",
+        "jenkins_mcp_server",
+        "--env-file",
+        "/path/to/jenkins_mcp_server/.env"
+      ],
+      "env": {
+        "PYTHONPATH": "/path/to/jenkins_mcp_server/src"
+      }
+    }
+  }
+}
+```
+
+**Windows:**
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "C:\\path\\to\\jenkins_mcp_server\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "jenkins_mcp_server",
+        "--env-file",
+        "C:\\path\\to\\jenkins_mcp_server\\.env"
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\path\\to\\jenkins_mcp_server\\src"
+      }
+    }
+  }
+}
+```
+
+---
+
+### 🧪 Testing Your Connection
+
+Before configuring MCP clients, test your Jenkins connection manually:
+
+#### Create a Test Script
+
+Save this as `test_jenkins_connection.py`:
+
+```python
+#!/usr/bin/env python3
+"""
+Test Jenkins connectivity for MCP server troubleshooting
+"""
+import os
+import sys
+import time
+import requests
+from dotenv import load_dotenv
+
+def test_connection():
+    # Load environment
+    env_file = '/path/to/your/.env'  # Update this path
+    print(f"Loading environment from: {env_file}")
+    load_dotenv(env_file)
+    
+    url = os.getenv('JENKINS_URL')
+    username = os.getenv('JENKINS_USERNAME')
+    token = os.getenv('JENKINS_TOKEN')
+    
+    print(f"\nJenkins Configuration:")
+    print(f"  URL: {url}")
+    print(f"  Username: {username}")
+    print(f"  Token: {'***' if token else 'NOT SET'}")
+    
+    # Test 1: DNS Resolution
+    print(f"\n[Test 1] Testing DNS resolution...")
+    import socket
+    try:
+        hostname = url.split('://')[1].split(':')[0]
+        ip = socket.gethostbyname(hostname)
+        print(f"  ✓ DNS resolved: {hostname} -> {ip}")
+    except Exception as e:
+        print(f"  ✗ DNS resolution failed: {e}")
+        return False
+    
+    # Test 2: Basic connectivity
+    print(f"\n[Test 2] Testing basic HTTP connectivity...")
+    try:
+        start = time.time()
+        response = requests.get(f"{url}/api/json", timeout=5)
+        elapsed = time.time() - start
+        print(f"  ✓ Connection successful (no auth): {response.status_code} in {elapsed:.2f}s")
+    except requests.exceptions.Timeout:
+        print(f"  ✗ Connection timed out after 5 seconds")
+        return False
+    except Exception as e:
+        print(f"  ✗ Connection failed: {e}")
+        return False
+    
+    # Test 3: Authenticated request
+    print(f"\n[Test 3] Testing authenticated request...")
+    try:
+        start = time.time()
+        response = requests.get(
+            f"{url}/api/json",
+            auth=(username, token),
+            timeout=10
+        )
+        elapsed = time.time() - start
+        print(f"  ✓ Authenticated request: {response.status_code} in {elapsed:.2f}s")
+        
+        if response.status_code == 200:
+            data = response.json()
+            print(f"  ✓ Jenkins version: {data.get('version', 'unknown')}")
+            print(f"  ✓ Number of jobs: {len(data.get('jobs', []))}")
+        elif response.status_code == 401:
+            print(f"  ✗ Authentication failed - check username/token")
+            return False
+        elif response.status_code == 403:
+            print(f"  ✗ Access forbidden - check permissions")
+            return False
+    except Exception as e:
+        print(f"  ✗ Authenticated request failed: {e}")
+        return False
+    
+    # Test 4: python-jenkins library
+    print(f"\n[Test 4] Testing python-jenkins library...")
+    try:
+        import jenkins
+        start = time.time()
+        server = jenkins.Jenkins(url, username=username, password=token)
+        user = server.get_whoami()
+        elapsed = time.time() - start
+        print(f"  ✓ python-jenkins connection: {user['fullName']} in {elapsed:.2f}s")
+    except Exception as e:
+        print(f"  ✗ python-jenkins failed: {e}")
+        return False
+    
+    print(f"\n✓ All tests passed! Jenkins MCP Server should work.")
+    return True
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Jenkins MCP Server - Connection Diagnostic")
+    print("=" * 60)
+    
+    success = test_connection()
+    sys.exit(0 if success else 1)
+```
+
+#### Run the Test
+
+```bash
+# Connect to VPN first
+# Then run:
+cd /path/to/jenkins_mcp_server
+source .venv/bin/activate
+python test_jenkins_connection.py
+```
+
+**Expected output if everything works:**
+```
+============================================================
+Jenkins MCP Server - Connection Diagnostic
+============================================================
+
+[Test 1] Testing DNS resolution...
+  ✓ DNS resolved: jenkins.example.com -> 10.0.0.1
+
+[Test 2] Testing basic HTTP connectivity...
+  ✓ Connection successful (no auth): 200 in 0.45s
+
+[Test 3] Testing authenticated request...
+  ✓ Authenticated request: 200 in 0.52s
+  ✓ Jenkins version: 2.401.3
+  ✓ Number of jobs: 42
+
+[Test 4] Testing python-jenkins library...
+  ✓ python-jenkins connection: John Doe in 0.38s
+
+✓ All tests passed! Jenkins MCP Server should work.
+```
+
+If all tests pass but MCP still fails, use Solution 2 (Direct Python Execution).
+
+---
+
+### 🆘 Still Having Issues?
+
+If you're still experiencing problems after trying the solutions above:
+
+1. **Check Claude Desktop logs:**
+   - **macOS**: `~/Library/Logs/Claude/mcp-server-jenkins.log`
+   - **Windows**: `%APPDATA%\Claude\logs\mcp-server-jenkins.log`
+   - **Linux**: `~/.config/Claude/logs/mcp-server-jenkins.log`
+
+2. **Enable verbose logging** by adding `--verbose` to args:
+   ```json
+   "args": [
+     "-m",
+     "jenkins_mcp_server",
+     "--env-file",
+     "/path/to/.env",
+     "--verbose"
+   ]
+   ```
+
+3. **Verify VPN is active** before starting Claude Desktop:
+   ```bash
+   # Test if you can reach your Jenkins server
+   curl -I http://your-jenkins-server:8080
+   ```
+
+4. **Check if other tools can reach Jenkins** while on VPN:
+   - Try accessing Jenkins in your browser
+   - Try `curl` from terminal
+   - If both work but MCP doesn't, use Solution 2
+
+5. **Open an issue** with:
+   - Your operating system
+   - Claude Desktop log file
+   - Output of the connection test script
+   - Your configuration (with credentials redacted)
+
+---
 
 ### Enable Debug Logging
 
