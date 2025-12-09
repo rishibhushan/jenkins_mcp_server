@@ -162,12 +162,7 @@ Add to your VS Code `settings.json`:
 
 ### Option 2: Environment File (.env)
 
-Rename `.env.template` to `.env`
-```bash
-cp .env.template .env
-```
-
-In the `.env` file in your project directory:
+Create a file `.env` in your local:
 
 ```bash
 JENKINS_URL=http://jenkins.example.com:8080
@@ -215,7 +210,11 @@ Settings are loaded in this order (later overrides earlier):
 
 ### Option 1: Using npx (No Installation Required)
 ```bash
+# if .env file is located in the current directory
 npx @rishibhushan/jenkins-mcp-server --env-file .env
+
+# OR if .env file is located in /path/to/.env
+npx @rishibhushan/jenkins-mcp-server --env-file /path/to/.env
 ```
 
 ### Option 2: Global Installation
@@ -712,6 +711,149 @@ pip install -r requirements.txt
     }
   }
 }
+```
+---
+
+### Solution 4: Use Global Installation with Direct Python Path
+
+If you prefer to use global installation but still face VPN/timeout issues, you can combine both approaches.
+
+#### Step 1: Install Globally
+
+**Disconnect from VPN first** (to avoid proxy issues during installation):
+```bash
+# Install globally
+npm install -g @rishibhushan/jenkins-mcp-server
+
+# Verify installation
+jenkins-mcp-server --version
+```
+
+#### Step 2: Locate Global Installation Directory
+
+**For macOS/Linux:**
+```bash
+# Find the global npm directory
+npm root -g
+
+# This typically returns something like:
+# /usr/local/lib/node_modules
+# or
+# /Users/username/.npm-global/lib/node_modules
+
+# Your package will be at:
+# <npm-root>/@rishibhushan/jenkins-mcp-server
+```
+
+**For Windows (PowerShell):**
+```powershell
+# Find the global npm directory
+npm root -g
+
+# This typically returns something like:
+# C:\Users\username\AppData\Roaming\npm\node_modules
+
+# Your package will be at:
+# <npm-root>\@rishibhushan\jenkins-mcp-server
+```
+
+#### Step 3: Find the Python Path
+
+Once you know the installation directory:
+
+**macOS/Linux:**
+```bash
+# If npm root -g shows: /usr/local/lib/node_modules
+# Your Python path will be:
+/usr/local/lib/node_modules/@rishibhushan/jenkins-mcp-server/.venv/bin/python
+
+# Verify it exists:
+ls -la /usr/local/lib/node_modules/@rishibhushan/jenkins-mcp-server/.venv/bin/python
+```
+
+**Windows:**
+```powershell
+# If npm root -g shows: C:\Users\username\AppData\Roaming\npm\node_modules
+# Your Python path will be:
+C:\Users\username\AppData\Roaming\npm\node_modules\@rishibhushan\jenkins-mcp-server\.venv\Scripts\python.exe
+
+# Verify it exists:
+Test-Path "C:\Users\username\AppData\Roaming\npm\node_modules\@rishibhushan\jenkins-mcp-server\.venv\Scripts\python.exe"
+```
+
+#### Step 4: Configure Your MCP Client
+
+**For Claude Desktop (macOS/Linux):**
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "/usr/local/lib/node_modules/@rishibhushan/jenkins-mcp-server/.venv/bin/python",
+      "args": [
+        "-m",
+        "jenkins_mcp_server",
+        "--env-file",
+        "/path/to/your/.env"
+      ],
+      "env": {
+        "PYTHONPATH": "/usr/local/lib/node_modules/@rishibhushan/jenkins-mcp-server/src"
+      }
+    }
+  }
+}
+```
+
+**For Claude Desktop (Windows):**
+```json
+{
+  "mcpServers": {
+    "jenkins": {
+      "command": "C:\\Users\\username\\AppData\\Roaming\\npm\\node_modules\\@rishibhushan\\jenkins-mcp-server\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "jenkins_mcp_server",
+        "--env-file",
+        "C:\\path\\to\\your\\.env"
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\Users\\username\\AppData\\Roaming\\npm\\node_modules\\@rishibhushan\\jenkins-mcp-server\\src"
+      }
+    }
+  }
+}
+```
+
+**For Other MCP Clients:**
+
+Use the same pattern - replace the `command` with the direct Python path and set the `PYTHONPATH` environment variable.
+
+#### Step 5: Test and Use
+
+1. **Connect to your VPN**
+2. **Restart your MCP client** (Claude Desktop, VS Code, etc.)
+3. **Verify the connection** works
+
+#### Why This Solution Works
+
+- ✅ **Persistent installation** - No need to download on each use
+- ✅ **Proper network routing** - Python process inherits VPN routing
+- ✅ **Works across sessions** - Survives VPN connect/disconnect cycles
+- ✅ **Easy updates** - Just run `npm update -g @rishibhushan/jenkins-mcp-server`
+- ✅ **Universal** - Works with any MCP client (Claude, VS Code, etc.)
+
+#### Quick Reference Commands
+```bash
+# Find your global installation
+npm root -g
+
+# Update global installation
+npm update -g @rishibhushan/jenkins-mcp-server
+
+# Uninstall if needed
+npm uninstall -g @rishibhushan/jenkins-mcp-server
+
+# Test the Python path works
+/path/to/global/installation/.venv/bin/python -m jenkins_mcp_server --help
 ```
 
 ---
