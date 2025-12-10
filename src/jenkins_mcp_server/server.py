@@ -491,6 +491,18 @@ async def handle_list_tools() -> list[types.Tool]:
                         "type": "integer",
                         "description": "Build number to get console output from"
                     },
+                    "max_lines": {
+                        "type": "integer",
+                        "description": "Maximum number of lines to return (default: 1000, max: 10000)",
+                        "default": 1000,
+                        "minimum": 10,
+                        "maximum": 10000
+                    },
+                    "tail_only": {
+                        "type": "boolean",
+                        "description": "If true, return last N lines instead of first N lines (default: false)",
+                        "default": False
+                    },
                 },
                 "required": ["job_name", "build_number"],
             },
@@ -1082,22 +1094,70 @@ async def _tool_get_build_info(client, args):
 
 
 async def _tool_get_build_console(client, args):
-    """Get build console output"""
+    """Get build console output with improved truncation (High Priority Issue #5)"""
     # Input validation (Quick Win #4)
     job_name = validate_job_name(args.get("job_name"))
     build_number = validate_build_number(args.get("build_number"))
 
+    # Get configurable parameters with defaults from settings
+    settings = get_settings()
+    max_lines = args.get("max_lines", settings.console_max_lines)
+    tail_only = args.get("tail_only", False)
+
+    # Validate max_lines
+    try:
+        max_lines = int(max_lines)
+        if max_lines < 10:
+            max_lines = 10
+        elif max_lines > 10000:
+            max_lines = 10000
+    except (ValueError, TypeError):
+        max_lines = settings.console_max_lines
+
+    # Validate tail_only
+    if not isinstance(tail_only, bool):
+        tail_only = str(tail_only).lower() in ('true', '1', 'yes')
+
+    # Get console output
     console_output = client.get_build_console_output(job_name, build_number)
 
-    # Limit output size
-    max_length = 10000
-    if len(console_output) > max_length:
-        console_output = console_output[:max_length] + "\n... (output truncated)"
+    # Split into lines for better handling
+    all_lines = console_output.split('\n')
+    total_lines = len(all_lines)
+
+    # Determine what to show
+    prefix = ""
+    if total_lines <= max_lines:
+        # No truncation needed
+        output_lines = all_lines
+        prefix = f"[Complete output: {total_lines} lines]\n\n"
+    elif tail_only:
+        # Show last N lines
+        output_lines = all_lines[-max_lines:]
+        truncated_lines = total_lines - max_lines
+        prefix = f"[Showing last {max_lines} of {total_lines} lines - {truncated_lines} earlier lines omitted]\n\n"
+    else:
+        # Show first N lines
+        output_lines = all_lines[:max_lines]
+        truncated_lines = total_lines - max_lines
+        prefix = f"[Showing first {max_lines} of {total_lines} lines - {truncated_lines} later lines truncated]\n\n"
+
+    # Reconstruct output
+    final_output = '\n'.join(output_lines)
+
+    # Add helpful note if truncated
+    if total_lines > max_lines:
+        if tail_only:
+            suffix = f"\n\n💡 Tip: Use max_lines parameter to see more lines (current: {max_lines}, max: 10000)"
+        else:
+            suffix = f"\n\n💡 Tip: Set tail_only=true to see last {max_lines} lines, or increase max_lines (current: {max_lines}, max: 10000)"
+    else:
+        suffix = ""
 
     return [
         types.TextContent(
             type="text",
-            text=f"Console output for {job_name} #{build_number}:\n\n```\n{console_output}\n```"
+            text=f"{prefix}Console output for {job_name} #{build_number}:\n\n```\n{final_output}\n```{suffix}"
         )
     ]
 

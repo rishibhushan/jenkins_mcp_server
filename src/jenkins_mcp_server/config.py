@@ -5,6 +5,8 @@ Handles loading Jenkins connection settings from multiple sources:
 1. VS Code settings.json (highest priority)
 2. Environment variables / .env file
 3. Direct instantiation with parameters
+
+Enhanced with timeout configuration support.
 """
 
 import json
@@ -50,6 +52,50 @@ class JenkinsSettings(BaseSettings):
         description="Jenkins API token (preferred over password)"
     )
 
+    # Timeout settings (High Priority Issue #4)
+    timeout: int = Field(
+        default=30,
+        description="Default timeout for Jenkins API calls in seconds",
+        ge=5,
+        le=300
+    )
+
+    connect_timeout: int = Field(
+        default=10,
+        description="Connection timeout in seconds",
+        ge=2,
+        le=60
+    )
+
+    read_timeout: int = Field(
+        default=30,
+        description="Read timeout for API responses in seconds",
+        ge=5,
+        le=300
+    )
+
+    # Retry settings
+    max_retries: int = Field(
+        default=3,
+        description="Maximum number of retry attempts for failed requests",
+        ge=0,
+        le=10
+    )
+
+    # Console output settings (High Priority Issue #5)
+    console_max_lines: int = Field(
+        default=1000,
+        description="Default maximum lines to return from console output",
+        ge=10,
+        le=50000
+    )
+
+    # SSL verification
+    verify_ssl: bool = Field(
+        default=True,
+        description="Whether to verify SSL certificates"
+    )
+
     model_config = SettingsConfigDict(
         env_prefix="JENKINS_",
         env_file_encoding="utf-8",
@@ -92,6 +138,12 @@ class JenkinsSettings(BaseSettings):
         logger.info("Jenkins Configuration:")
         logger.info(f"  URL: {self.url or 'Not configured'}")
         logger.info(f"  Username: {self.username or 'Not configured'}")
+        logger.info(f"  Timeout: {self.timeout}s")
+        logger.info(f"  Connect Timeout: {self.connect_timeout}s")
+        logger.info(f"  Read Timeout: {self.read_timeout}s")
+        logger.info(f"  Max Retries: {self.max_retries}")
+        logger.info(f"  Console Max Lines: {self.console_max_lines}")
+        logger.info(f"  Verify SSL: {self.verify_ssl}")
 
         if hide_sensitive:
             logger.info(f"  Authentication: {self.auth_method}")
@@ -244,7 +296,8 @@ def load_settings(
         print(f"=== VS Code settings loaded: {vscode_settings is not None} ===", file=sys.stderr, flush=True)
         if vscode_settings:
             # Merge VS Code settings into our settings object
-            for key in ['url', 'username', 'password', 'token']:
+            for key in ['url', 'username', 'password', 'token', 'timeout', 'connect_timeout',
+                        'read_timeout', 'max_retries', 'console_max_lines', 'verify_ssl']:
                 vscode_value = vscode_settings.get(key)
                 if vscode_value is not None:
                     setattr(settings, key, vscode_value)

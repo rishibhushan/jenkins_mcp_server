@@ -3,6 +3,8 @@ Jenkins MCP Server Client Module
 
 Provides a clean interface to Jenkins API operations with automatic fallback
 between python-jenkins library and direct REST API calls.
+
+Enhanced with configurable timeout support.
 """
 
 import logging
@@ -34,7 +36,8 @@ class JenkinsClient:
     Client for interacting with Jenkins API.
 
     Supports both python-jenkins library and direct REST API calls
-    with automatic fallback for reliability.
+    with automatic fallback for reliability. Enhanced with configurable
+    timeout support.
     """
 
     def __init__(self, settings: Optional[JenkinsSettings] = None):
@@ -60,6 +63,12 @@ class JenkinsClient:
         username, auth_value = self.settings.get_credentials()
         self.auth = HTTPBasicAuth(username, auth_value)
 
+        # Store timeout settings (High Priority Issue #4)
+        self.timeout = self.settings.timeout
+        self.connect_timeout = self.settings.connect_timeout
+        self.read_timeout = self.settings.read_timeout
+        self.verify_ssl = self.settings.verify_ssl
+
         # Cache for python-jenkins server instance
         self._server: Optional[jenkins.Jenkins] = None
 
@@ -67,14 +76,14 @@ class JenkinsClient:
         self._test_connection()
 
     def _test_connection(self) -> None:
-        """Test connection to Jenkins server (with quick timeout for MCP)"""
+        """Test connection to Jenkins server (with configurable timeout)"""
         try:
-            # Quick connection test with short timeout for MCP compatibility
+            # Quick connection test with configured timeout for MCP compatibility
             response = requests.get(
                 f"{self.base_url}/api/json",
                 auth=self.auth,
-                verify=False,
-                timeout=3  # Short timeout for responsiveness
+                verify=self.verify_ssl if self.verify_ssl else False,
+                timeout=self.connect_timeout  # Use configured connect timeout
             )
             response.raise_for_status()
 
@@ -83,7 +92,7 @@ class JenkinsClient:
             logger.debug(f"Jenkins version: {data.get('_class', 'unknown')}")
 
         except requests.Timeout:
-            logger.warning(f"Connection to Jenkins timed out (server may be slow)")
+            logger.warning(f"Connection to Jenkins timed out after {self.connect_timeout}s (server may be slow)")
             # Don't fail - let actual operations fail if there's a real problem
         except requests.RequestException as e:
             logger.warning(f"Could not verify Jenkins connection: {e}")
@@ -91,19 +100,20 @@ class JenkinsClient:
 
     @property
     def server(self) -> jenkins.Jenkins:
-        """Get or create python-jenkins server instance (lazy initialization)"""
+        """Get or create python-jenkins server instance (lazy initialization with timeout)"""
         if self._server is None:
             username, password = self.settings.get_credentials()
             self._server = jenkins.Jenkins(
                 self.base_url,
                 username=username,
-                password=password
+                password=password,
+                timeout=self.timeout  # Use configured timeout
             )
         return self._server
 
     def _api_call(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """
-        Make a direct REST API call to Jenkins.
+        Make a direct REST API call to Jenkins with configured timeout.
 
         Args:
             method: HTTP method (GET, POST, etc.)
@@ -115,8 +125,11 @@ class JenkinsClient:
         """
         url = f"{self.base_url}{endpoint}"
         kwargs.setdefault('auth', self.auth)
-        kwargs.setdefault('verify', False)
-        kwargs.setdefault('timeout', 30)
+        kwargs.setdefault('verify', self.verify_ssl if self.verify_ssl else False)
+
+        # Use configured timeout (can be overridden per call)
+        if 'timeout' not in kwargs:
+            kwargs['timeout'] = (self.connect_timeout, self.read_timeout)
 
         response = requests.request(method, url, **kwargs)
         response.raise_for_status()
@@ -220,82 +233,46 @@ class JenkinsClient:
         Returns:
             Dict with 'queue_id' and 'build_number' (if wait_for_start=True)
         """
-        try:
-            # Trigger build using python-jenkins
-            queue_id = self.server.build_job(job_name, parameters or {})
-            queue_id = int(queue_id) if queue_id else None
+        # Get the last build number before triggering
+        last_build_num = self.get_last_build_number(job_name) or 0
 
-            build_number = None
-            if wait_for_start and queue_id:
-                build_number = self._wait_for_build_start(
-                    queue_id, timeout, poll_interval
-                )
-
-            return {"queue_id": queue_id, "build_number": build_number}
-
-        except Exception as e:
-            logger.debug(f"python-jenkins failed, using REST API: {e}")
-            return self._build_job_rest(
-                job_name, parameters, wait_for_start, timeout, poll_interval
+        # Trigger the build
+        if parameters:
+            self._api_call(
+                'POST',
+                f'/job/{job_name}/buildWithParameters',
+                params=parameters
             )
+        else:
+            self._api_call('POST', f'/job/{job_name}/build')
 
-    def _build_job_rest(
-            self,
-            job_name: str,
-            parameters: Optional[Dict[str, Any]],
-            wait_for_start: bool,
-            timeout: int,
-            poll_interval: float
-    ) -> Dict[str, Optional[int]]:
-        """Build job using REST API (fallback method)"""
-        endpoint = f'/job/{job_name}/buildWithParameters' if parameters else f'/job/{job_name}/build'
+        # Get queue ID from response
+        queue_id = self._extract_queue_id_from_location(
+            f'/job/{job_name}/build'
+        )
 
-        response = self._api_call('POST', endpoint, params=parameters)
+        result = {
+            'queue_id': queue_id,
+            'build_number': None
+        }
 
-        # Extract queue ID from Location header
-        location = response.headers.get('Location', '')
-        queue_id = self._extract_queue_id(location)
+        # Optionally wait for build to start
+        if wait_for_start:
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                time.sleep(poll_interval)
 
-        build_number = None
-        if wait_for_start and queue_id:
-            build_number = self._wait_for_build_start(queue_id, timeout, poll_interval)
+                # Check if a new build has started
+                current_build_num = self.get_last_build_number(job_name)
+                if current_build_num and current_build_num > last_build_num:
+                    result['build_number'] = current_build_num
+                    logger.info(f"Build {job_name} #{current_build_num} started")
+                    break
 
-        return {"queue_id": queue_id, "build_number": build_number}
+        return result
 
-    def _wait_for_build_start(
-            self,
-            queue_id: int,
-            timeout: int,
-            poll_interval: float
-    ) -> Optional[int]:
-        """Wait for a queued build to start and return its build number"""
-        elapsed = 0.0
-
-        while elapsed < timeout:
-            try:
-                # Try python-jenkins first
-                item = self.server.get_queue_item(queue_id)
-                if item and item.get('executable'):
-                    return int(item['executable']['number'])
-            except Exception:
-                # Fall back to REST API
-                try:
-                    response = self._api_call('GET', f'/queue/item/{queue_id}/api/json')
-                    item = response.json()
-                    if item.get('executable'):
-                        return int(item['executable']['number'])
-                except Exception:
-                    pass
-
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-
-        logger.warning(f"Timeout waiting for build {queue_id} to start")
-        return None
-
-    @staticmethod
-    def _extract_queue_id(location: str) -> Optional[int]:
-        """Extract queue ID from Jenkins Location header"""
+    def _extract_queue_id_from_location(self, location: str) -> Optional[int]:
+        """Extract queue ID from Location header"""
         if not location:
             return None
 
@@ -479,6 +456,18 @@ class JenkinsClient:
         """Get information about a specific node"""
         response = self._api_call('GET', f'/computer/{node_name}/api/json')
         return response.json()
+
+    # ==================== Additional Helper Methods ====================
+
+    def get_whoami(self) -> Dict[str, Any]:
+        """Get information about the current authenticated user"""
+        response = self._api_call('GET', '/me/api/json')
+        return response.json()
+
+    def get_version(self) -> str:
+        """Get Jenkins version"""
+        response = self._api_call('GET', '/api/json')
+        return response.headers.get('X-Jenkins', 'Unknown')
 
 
 # ==================== Client Factory ====================
