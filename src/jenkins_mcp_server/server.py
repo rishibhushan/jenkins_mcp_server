@@ -11,6 +11,8 @@ import json
 import logging
 import sys
 from typing import Optional
+import asyncio
+import time
 
 import mcp.server.stdio
 import mcp.types as types
@@ -19,7 +21,7 @@ from mcp.server.models import InitializationOptions
 from pydantic import AnyUrl
 
 from .config import JenkinsSettings, get_default_settings
-from .jenkins_client import get_jenkins_client, JenkinsConnectionError
+from .jenkins_client import get_jenkins_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -30,11 +32,17 @@ server = Server("jenkins-mcp-server")
 # Settings storage (injected by main)
 _jenkins_settings: Optional[JenkinsSettings] = None
 
+# Client connection cache (Quick Win #3)
+_jenkins_client_cache = None
+_client_cache_lock = asyncio.Lock()
+
 
 def set_jenkins_settings(settings: JenkinsSettings) -> None:
     """Set Jenkins settings for the server (called from __init__.py)"""
-    global _jenkins_settings
+    global _jenkins_settings, _jenkins_client_cache
     _jenkins_settings = settings
+    # Clear cache when settings change
+    _jenkins_client_cache = None
 
 
 def get_settings() -> JenkinsSettings:
@@ -43,6 +51,64 @@ def get_settings() -> JenkinsSettings:
     if _jenkins_settings is None:
         _jenkins_settings = get_default_settings()
     return _jenkins_settings
+
+
+async def get_cached_jenkins_client(settings: JenkinsSettings):
+    """
+    Get or create cached Jenkins client (Quick Win #3: Client Caching)
+    Reuses the same client connection across tool calls for better performance.
+    """
+    global _jenkins_client_cache
+
+    async with _client_cache_lock:
+        if _jenkins_client_cache is None:
+            logger.info("Creating new Jenkins client connection")
+            _jenkins_client_cache = get_jenkins_client(settings)
+        return _jenkins_client_cache
+
+
+# Input Validation Helpers (Quick Win #4)
+
+def validate_job_name(job_name: any) -> str:
+    """Validate job name parameter"""
+    if not job_name:
+        raise ValueError("Missing required argument: job_name")
+    if not isinstance(job_name, str):
+        raise ValueError(f"job_name must be a string, got {type(job_name).__name__}")
+    if not job_name.strip():
+        raise ValueError("job_name cannot be empty or whitespace")
+    return job_name.strip()
+
+
+def validate_build_number(build_number: any) -> int:
+    """Validate build number parameter"""
+    if build_number is None:
+        raise ValueError("Missing required argument: build_number")
+
+    try:
+        num = int(build_number)
+    except (ValueError, TypeError):
+        raise ValueError(f"build_number must be an integer, got: {build_number}")
+
+    if num < 0:
+        raise ValueError(f"build_number must be non-negative, got: {num}")
+
+    return num
+
+
+def validate_config_xml(config_xml: any) -> str:
+    """Validate XML configuration parameter"""
+    if not config_xml:
+        raise ValueError("Missing required argument: config_xml")
+    if not isinstance(config_xml, str):
+        raise ValueError(f"config_xml must be a string, got {type(config_xml).__name__}")
+
+    # Basic XML validation
+    xml_str = config_xml.strip()
+    if not xml_str.startswith('<'):
+        raise ValueError("config_xml must be valid XML (should start with '<')")
+
+    return xml_str
 
 
 # ==================== Resources ====================
@@ -343,8 +409,14 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "job_name": {"type": "string"},
-                    "build_number": {"type": "integer"},
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job"
+                    },
+                    "build_number": {
+                        "type": "integer",
+                        "description": "Build number to stop"
+                    },
                 },
                 "required": ["job_name", "build_number"],
             },
@@ -369,7 +441,12 @@ async def handle_list_tools() -> list[types.Tool]:
             description="Get detailed information about a Jenkins job",
             inputSchema={
                 "type": "object",
-                "properties": {"job_name": {"type": "string"}},
+                "properties": {
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job"
+                    }
+                },
                 "required": ["job_name"],
             },
         ),
@@ -381,8 +458,14 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "job_name": {"type": "string"},
-                    "build_number": {"type": "integer"},
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job"
+                    },
+                    "build_number": {
+                        "type": "integer",
+                        "description": "Build number to get information about"
+                    },
                 },
                 "required": ["job_name", "build_number"],
             },
@@ -393,8 +476,14 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "job_name": {"type": "string"},
-                    "build_number": {"type": "integer"},
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job"
+                    },
+                    "build_number": {
+                        "type": "integer",
+                        "description": "Build number to get console output from"
+                    },
                 },
                 "required": ["job_name", "build_number"],
             },
@@ -404,7 +493,12 @@ async def handle_list_tools() -> list[types.Tool]:
             description="Get the last build number for a job",
             inputSchema={
                 "type": "object",
-                "properties": {"job_name": {"type": "string"}},
+                "properties": {
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job"
+                    }
+                },
                 "required": ["job_name"],
             },
         ),
@@ -413,7 +507,12 @@ async def handle_list_tools() -> list[types.Tool]:
             description="Get the timestamp of the last build",
             inputSchema={
                 "type": "object",
-                "properties": {"job_name": {"type": "string"}},
+                "properties": {
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job"
+                    }
+                },
                 "required": ["job_name"],
             },
         ),
@@ -425,8 +524,14 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "job_name": {"type": "string"},
-                    "config_xml": {"type": "string", "description": "Job configuration XML"},
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name for the new Jenkins job"
+                    },
+                    "config_xml": {
+                        "type": "string",
+                        "description": "Job configuration in XML format"
+                    },
                 },
                 "required": ["job_name", "config_xml"],
             },
@@ -437,8 +542,14 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "new_job_name": {"type": "string"},
-                    "source_job_name": {"type": "string"},
+                    "new_job_name": {
+                        "type": "string",
+                        "description": "Name for the new job to be created"
+                    },
+                    "source_job_name": {
+                        "type": "string",
+                        "description": "Name of the existing job to copy from"
+                    },
                 },
                 "required": ["new_job_name", "source_job_name"],
             },
@@ -449,9 +560,19 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "job_name": {"type": "string"},
-                    "config_data": {"type": "object"},
-                    "root_tag": {"type": "string", "default": "project"},
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name for the new Jenkins job"
+                    },
+                    "config_data": {
+                        "type": "object",
+                        "description": "Job configuration as structured data (will be converted to XML)"
+                    },
+                    "root_tag": {
+                        "type": "string",
+                        "default": "project",
+                        "description": "Root XML tag for the configuration (default: 'project')"
+                    },
                 },
                 "required": ["job_name", "config_data"],
             },
@@ -461,7 +582,12 @@ async def handle_list_tools() -> list[types.Tool]:
             description="Delete an existing Jenkins job",
             inputSchema={
                 "type": "object",
-                "properties": {"job_name": {"type": "string"}},
+                "properties": {
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job to delete"
+                    }
+                },
                 "required": ["job_name"],
             },
         ),
@@ -470,7 +596,12 @@ async def handle_list_tools() -> list[types.Tool]:
             description="Enable a disabled Jenkins job",
             inputSchema={
                 "type": "object",
-                "properties": {"job_name": {"type": "string"}},
+                "properties": {
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job to enable"
+                    }
+                },
                 "required": ["job_name"],
             },
         ),
@@ -479,7 +610,12 @@ async def handle_list_tools() -> list[types.Tool]:
             description="Disable a Jenkins job",
             inputSchema={
                 "type": "object",
-                "properties": {"job_name": {"type": "string"}},
+                "properties": {
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job to disable"
+                    }
+                },
                 "required": ["job_name"],
             },
         ),
@@ -489,8 +625,14 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "job_name": {"type": "string"},
-                    "new_name": {"type": "string"},
+                    "job_name": {
+                        "type": "string",
+                        "description": "Current name of the Jenkins job"
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": "New name for the Jenkins job"
+                    },
                 },
                 "required": ["job_name", "new_name"],
             },
@@ -502,7 +644,12 @@ async def handle_list_tools() -> list[types.Tool]:
             description="Get the configuration XML for a job",
             inputSchema={
                 "type": "object",
-                "properties": {"job_name": {"type": "string"}},
+                "properties": {
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job"
+                    }
+                },
                 "required": ["job_name"],
             },
         ),
@@ -512,8 +659,14 @@ async def handle_list_tools() -> list[types.Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "job_name": {"type": "string"},
-                    "config_xml": {"type": "string"},
+                    "job_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins job to update"
+                    },
+                    "config_xml": {
+                        "type": "string",
+                        "description": "New configuration in XML format"
+                    },
                 },
                 "required": ["job_name", "config_xml"],
             },
@@ -535,9 +688,21 @@ async def handle_list_tools() -> list[types.Tool]:
             description="Get information about a specific Jenkins node",
             inputSchema={
                 "type": "object",
-                "properties": {"node_name": {"type": "string"}},
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "Name of the Jenkins node/agent"
+                    }
+                },
                 "required": ["node_name"],
             },
+        ),
+
+        # Health Check (Quick Win #1)
+        types.Tool(
+            name="health-check",
+            description="Check Jenkins server health and connection status. Useful for troubleshooting connectivity issues.",
+            inputSchema={"type": "object", "properties": {}},
         ),
     ]
 
@@ -550,11 +715,12 @@ async def handle_call_tool(
         name: str,
         arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-    """Handle tool execution requests"""
+    """Handle tool execution requests with improved error handling"""
     arguments = arguments or {}
 
     try:
-        client = get_jenkins_client(get_settings())
+        # Use cached client for better performance (Quick Win #3)
+        client = await get_cached_jenkins_client(get_settings())
 
         # Route to appropriate handler
         handlers = {
@@ -589,6 +755,9 @@ async def handle_call_tool(
             "get-queue-info": _tool_get_queue_info,
             "list-nodes": _tool_list_nodes,
             "get-node-info": _tool_get_node_info,
+
+            # Health check (Quick Win #1)
+            "health-check": _tool_health_check,
         }
 
         handler = handlers.get(name)
@@ -597,14 +766,130 @@ async def handle_call_tool(
 
         return await handler(client, arguments)
 
-    except Exception as e:
-        logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)
+    # Better error messages with troubleshooting steps (Quick Win #2)
+    except ValueError as e:
+        # Validation errors - user's fault
+        logger.warning(f"Validation error in {name}: {e}")
         return [
             types.TextContent(
                 type="text",
-                text=f"Error executing {name}: {str(e)}"
+                text=f"❌ Invalid input for {name}: {str(e)}\n\n"
+                     f"💡 Please check the parameter values and try again."
             )
         ]
+    except ImportError:
+        # Missing requests library
+        import_error = (
+            f"⚠️ Missing required library 'requests'.\n\n"
+            f"To fix this, run:\n"
+            f"pip install requests"
+        )
+        logger.error(f"Import error in {name}: requests library not found")
+        return [types.TextContent(type="text", text=import_error)]
+    except Exception as e:
+        # Check for common requests exceptions
+        error_type = type(e).__name__
+        error_message = str(e)
+
+        # Timeout errors
+        if 'timeout' in error_message.lower() or error_type == 'Timeout':
+            logger.error(f"Timeout error in {name}: {e}")
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"⏱️ Timeout connecting to Jenkins.\n\n"
+                         f"Troubleshooting steps:\n"
+                         f"1. Check Jenkins server is running\n"
+                         f"2. Verify URL is correct: {get_settings().url}\n"
+                         f"3. Ensure network/VPN connection is active\n"
+                         f"4. Check firewall settings\n\n"
+                         f"Error: {str(e)}"
+                )
+            ]
+
+        # Connection errors
+        elif 'connection' in error_message.lower() or error_type in ['ConnectionError', 'ConnectionRefusedError']:
+            logger.error(f"Connection error in {name}: {e}")
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"🔌 Cannot connect to Jenkins at {get_settings().url}\n\n"
+                         f"Troubleshooting steps:\n"
+                         f"1. Verify Jenkins server is accessible\n"
+                         f"2. Check port is correct (usually 8080)\n"
+                         f"3. Ensure firewall allows connection\n"
+                         f"4. Test with: curl {get_settings().url}/api/json\n\n"
+                         f"Error: {str(e)}"
+                )
+            ]
+
+        # Authentication errors (401)
+        elif '401' in error_message or 'unauthorized' in error_message.lower():
+            logger.error(f"Authentication error in {name}: {e}")
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"🔐 Authentication failed.\n\n"
+                         f"Troubleshooting steps:\n"
+                         f"1. Verify username is correct: {get_settings().username}\n"
+                         f"2. Check API token is valid (not expired)\n"
+                         f"3. Generate new token in Jenkins:\n"
+                         f"   - Go to Jenkins → Your Name → Configure\n"
+                         f"   - Click 'Add new Token' under API Token section\n"
+                         f"4. Update .env file with new token\n\n"
+                         f"Error: {str(e)}"
+                )
+            ]
+
+        # Permission errors (403)
+        elif '403' in error_message or 'forbidden' in error_message.lower():
+            logger.error(f"Permission error in {name}: {e}")
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"🚫 Permission denied.\n\n"
+                         f"Troubleshooting steps:\n"
+                         f"1. Check user has permission to access Jenkins\n"
+                         f"2. Verify user has permission for this operation\n"
+                         f"3. Contact Jenkins admin to grant necessary permissions\n\n"
+                         f"User: {get_settings().username}\n"
+                         f"Operation: {name}\n"
+                         f"Error: {str(e)}"
+                )
+            ]
+
+        # Not found errors (404)
+        elif '404' in error_message or 'not found' in error_message.lower():
+            logger.error(f"Not found error in {name}: {e}")
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"❌ Resource not found.\n\n"
+                         f"Troubleshooting steps:\n"
+                         f"1. Check job/resource name is correct (case-sensitive)\n"
+                         f"2. Verify resource exists in Jenkins\n"
+                         f"3. Ensure user has permission to view the resource\n"
+                         f"4. Try listing all jobs with 'list-jobs' tool\n\n"
+                         f"Error: {str(e)}"
+                )
+            ]
+
+        # Generic error with some context
+        else:
+            logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"❌ Error executing {name}\n\n"
+                         f"Error type: {error_type}\n"
+                         f"Error message: {str(e)}\n\n"
+                         f"💡 Troubleshooting tips:\n"
+                         f"1. Run 'health-check' tool to verify connection\n"
+                         f"2. Check Jenkins logs for more details\n"
+                         f"3. Verify all parameters are correct\n"
+                         f"4. Try the operation manually in Jenkins UI"
+                )
+            ]
 
 
 # ==================== Tool Handlers ====================
@@ -613,11 +898,12 @@ async def handle_call_tool(
 
 async def _tool_trigger_build(client, args):
     """Trigger a Jenkins build"""
-    job_name = args.get("job_name")
+    # Input validation (Quick Win #4)
+    job_name = validate_job_name(args.get("job_name"))
     parameters = args.get("parameters", {})
 
-    if not job_name:
-        raise ValueError("Missing required argument: job_name")
+    if parameters and not isinstance(parameters, dict):
+        raise ValueError(f"parameters must be a dictionary, got {type(parameters).__name__}")
 
     result = client.build_job(job_name, parameters)
 
@@ -634,11 +920,9 @@ async def _tool_trigger_build(client, args):
 
 async def _tool_stop_build(client, args):
     """Stop a running build"""
-    job_name = args.get("job_name")
-    build_number = args.get("build_number")
-
-    if not job_name or build_number is None:
-        raise ValueError("Missing required arguments: job_name and build_number")
+    # Input validation (Quick Win #4)
+    job_name = validate_job_name(args.get("job_name"))
+    build_number = validate_build_number(args.get("build_number"))
 
     client.stop_build(job_name, build_number)
 
@@ -742,11 +1026,9 @@ async def _tool_get_job_details(client, args):
 
 async def _tool_get_build_info(client, args):
     """Get build information"""
-    job_name = args.get("job_name")
-    build_number = args.get("build_number")
-
-    if not job_name or build_number is None:
-        raise ValueError("Missing required arguments: job_name and build_number")
+    # Input validation (Quick Win #4)
+    job_name = validate_job_name(args.get("job_name"))
+    build_number = validate_build_number(args.get("build_number"))
 
     build_info = client.get_build_info(job_name, build_number)
 
@@ -780,11 +1062,9 @@ async def _tool_get_build_info(client, args):
 
 async def _tool_get_build_console(client, args):
     """Get build console output"""
-    job_name = args.get("job_name")
-    build_number = args.get("build_number")
-
-    if not job_name or build_number is None:
-        raise ValueError("Missing required arguments: job_name and build_number")
+    # Input validation (Quick Win #4)
+    job_name = validate_job_name(args.get("job_name"))
+    build_number = validate_build_number(args.get("build_number"))
 
     console_output = client.get_build_console_output(job_name, build_number)
 
@@ -825,11 +1105,9 @@ async def _tool_get_last_build_timestamp(client, args):
 
 async def _tool_create_job(client, args):
     """Create a new job"""
-    job_name = args.get("job_name")
-    config_xml = args.get("config_xml")
-
-    if not job_name or not config_xml:
-        raise ValueError("Missing required arguments: job_name and config_xml")
+    # Input validation (Quick Win #4)
+    job_name = validate_job_name(args.get("job_name"))
+    config_xml = validate_config_xml(args.get("config_xml"))
 
     client.create_job(job_name, config_xml)
     return [types.TextContent(type="text", text=f"Successfully created job '{job_name}'")]
@@ -1035,3 +1313,154 @@ async def main():
     except Exception as e:
         logger.error(f"Server error: {e}", exc_info=True)
         sys.exit(1)
+
+# Health Check Tool (Quick Win #1)
+
+async def _tool_health_check(client, args):
+    """
+    Check Jenkins server health and connection status.
+    Provides detailed diagnostics for troubleshooting.
+    """
+    checks = {
+        "server_reachable": False,
+        "authentication_valid": False,
+        "api_responsive": False,
+        "server_version": None,
+        "server_url": get_settings().url,
+        "username": get_settings().username,
+        "response_time_ms": None,
+        "timestamp": None
+    }
+
+    status_emoji = "❌"
+    status_text = "Unhealthy"
+    error_details = None
+
+    try:
+        import datetime
+        start_time = time.time()
+        checks["timestamp"] = datetime.datetime.now().isoformat()
+
+        # Test 1: Basic connectivity
+        try:
+            # Try to get user info (tests auth + connectivity)
+            user_info = client.get_whoami()
+            checks["server_reachable"] = True
+            checks["authentication_valid"] = True
+
+            # Get version info
+            try:
+                version = client.get_version()
+                checks["server_version"] = version
+                checks["api_responsive"] = True
+            except Exception as ve:
+                logger.warning(f"Could not get version: {ve}")
+                checks["api_responsive"] = False
+
+            # Calculate response time
+            elapsed_ms = (time.time() - start_time) * 1000
+            checks["response_time_ms"] = round(elapsed_ms, 2)
+
+            # Determine overall status
+            if checks["api_responsive"]:
+                status_emoji = "✅"
+                status_text = "Healthy"
+                if elapsed_ms > 2000:
+                    status_text = "Healthy (Slow)"
+                    status_emoji = "⚠️"
+            elif checks["authentication_valid"]:
+                status_emoji = "⚠️"
+                status_text = "Partially Healthy (API issues)"
+
+        except Exception as conn_error:
+            error_details = str(conn_error)
+            error_type = type(conn_error).__name__
+
+            # Classify the error
+            if 'timeout' in error_details.lower():
+                status_text = "Timeout - Server not responding"
+                checks["server_reachable"] = False
+            elif '401' in error_details or 'unauthorized' in error_details.lower():
+                status_text = "Authentication Failed"
+                checks["server_reachable"] = True
+                checks["authentication_valid"] = False
+            elif 'connection' in error_details.lower():
+                status_text = "Connection Failed - Server unreachable"
+                checks["server_reachable"] = False
+            else:
+                status_text = f"Error: {error_type}"
+
+    except Exception as e:
+        error_details = str(e)
+        status_text = f"Health check failed: {type(e).__name__}"
+        logger.error(f"Health check error: {e}", exc_info=True)
+
+    # Build detailed report
+    report = f"""
+{status_emoji} Jenkins Health Check: {status_text}
+
+═══════════════════════════════════════
+CONNECTION STATUS
+═══════════════════════════════════════
+Server URL:          {checks['server_url']}
+Username:            {checks['username']}
+Server Reachable:    {'✅ Yes' if checks['server_reachable'] else '❌ No'}
+Authentication:      {'✅ Valid' if checks['authentication_valid'] else '❌ Failed'}
+API Responsive:      {'✅ Yes' if checks['api_responsive'] else '❌ No'}
+
+═══════════════════════════════════════
+SERVER DETAILS
+═══════════════════════════════════════
+Jenkins Version:     {checks['server_version'] or 'Unknown'}
+Response Time:       {checks['response_time_ms']}ms
+Checked At:          {checks['timestamp']}
+"""
+
+    if error_details:
+        report += f"""
+═══════════════════════════════════════
+ERROR DETAILS
+═══════════════════════════════════════
+{error_details}
+"""
+
+    # Add troubleshooting tips if unhealthy
+    if status_emoji == "❌":
+        report += """
+═══════════════════════════════════════
+TROUBLESHOOTING STEPS
+═══════════════════════════════════════
+"""
+        if not checks['server_reachable']:
+            report += """
+🔌 Server Not Reachable:
+  1. Verify Jenkins is running
+  2. Check the URL is correct
+  3. Test with: curl {url}/api/json
+  4. Check firewall/VPN settings
+  5. Verify network connectivity
+""".format(url=checks['server_url'])
+
+        if checks['server_reachable'] and not checks['authentication_valid']:
+            report += """
+🔐 Authentication Failed:
+  1. Verify username is correct
+  2. Check API token is valid
+  3. Generate new token:
+     - Jenkins → Your Name → Configure
+     - API Token section → Add new Token
+  4. Update .env file with new token
+"""
+
+        if checks['server_reachable'] and checks['authentication_valid'] and not checks['api_responsive']:
+            report += """
+⚠️ API Not Responsive:
+  1. Check Jenkins server logs
+  2. Verify Jenkins is not overloaded
+  3. Check for Jenkins plugin issues
+  4. Restart Jenkins if needed
+"""
+
+    report += "\n💡 Tip: Run this health-check regularly to monitor your Jenkins connection."
+
+    return [types.TextContent(type="text", text=report.strip())]
