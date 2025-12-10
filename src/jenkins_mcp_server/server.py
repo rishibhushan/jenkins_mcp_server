@@ -7,12 +7,12 @@ Provides MCP protocol handlers for Jenkins operations including:
 - Tools (Jenkins operations)
 """
 
+import asyncio
 import json
 import logging
 import sys
-from typing import Optional
-import asyncio
 import time
+from typing import Optional
 
 import mcp.server.stdio
 import mcp.types as types
@@ -445,6 +445,13 @@ async def handle_list_tools() -> list[types.Tool]:
                     "job_name": {
                         "type": "string",
                         "description": "Name of the Jenkins job"
+                    },
+                    "max_recent_builds": {
+                        "type": "integer",
+                        "description": "Maximum number of recent builds to fetch (0-10, default: 3). Set to 0 to skip build history.",
+                        "default": 3,
+                        "minimum": 0,
+                        "maximum": 10
                     }
                 },
                 "required": ["job_name"],
@@ -974,10 +981,19 @@ async def _tool_list_jobs(client, args):
 
 async def _tool_get_job_details(client, args):
     """Get detailed job information"""
-    job_name = args.get("job_name")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
 
-    if not job_name:
-        raise ValueError("Missing required argument: job_name")
+    # Configurable number of recent builds to fetch (Critical Issue #3)
+    max_recent_builds = args.get("max_recent_builds", 3)
+    try:
+        max_recent_builds = int(max_recent_builds)
+        if max_recent_builds < 0:
+            max_recent_builds = 0
+        elif max_recent_builds > 10:
+            max_recent_builds = 10  # Cap at 10 to prevent excessive API calls
+    except (ValueError, TypeError):
+        max_recent_builds = 3  # Default to 3
 
     job_info = client.get_job_info(job_name)
 
@@ -991,10 +1007,14 @@ async def _tool_get_job_details(client, args):
         "lastFailedBuild": job_info.get("lastFailedBuild", {}),
     }
 
-    # Add recent builds
-    if "builds" in job_info:
+    # Add recent builds (optimized to reduce API calls)
+    if max_recent_builds > 0 and "builds" in job_info:
         recent_builds = []
-        for build in job_info["builds"][:5]:
+        builds_to_fetch = job_info["builds"][:max_recent_builds]
+
+        logger.info(f"Fetching {len(builds_to_fetch)} recent builds for '{job_name}'")
+
+        for build in builds_to_fetch:
             try:
                 build_info = client.get_build_info(job_name, build["number"])
                 recent_builds.append({
@@ -1007,6 +1027,7 @@ async def _tool_get_job_details(client, args):
                 logger.warning(f"Could not fetch build {build['number']}: {e}")
 
         details["recentBuilds"] = recent_builds
+        details["recentBuildsCount"] = len(recent_builds)
 
     # Notify of resource changes
     try:
@@ -1083,9 +1104,8 @@ async def _tool_get_build_console(client, args):
 
 async def _tool_get_last_build_number(client, args):
     """Get last build number"""
-    job_name = args.get("job_name")
-    if not job_name:
-        raise ValueError("Missing required argument: job_name")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
 
     num = client.get_last_build_number(job_name)
     return [types.TextContent(type="text", text=f"Last build number for '{job_name}': {num}")]
@@ -1093,9 +1113,8 @@ async def _tool_get_last_build_number(client, args):
 
 async def _tool_get_last_build_timestamp(client, args):
     """Get last build timestamp"""
-    job_name = args.get("job_name")
-    if not job_name:
-        raise ValueError("Missing required argument: job_name")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
 
     ts = client.get_last_build_timestamp(job_name)
     return [types.TextContent(type="text", text=f"Last build timestamp for '{job_name}': {ts}")]
@@ -1115,11 +1134,9 @@ async def _tool_create_job(client, args):
 
 async def _tool_create_job_from_copy(client, args):
     """Create job from copy"""
-    new_job_name = args.get("new_job_name")
-    source_job_name = args.get("source_job_name")
-
-    if not new_job_name or not source_job_name:
-        raise ValueError("Missing required arguments: new_job_name and source_job_name")
+    # Input validation
+    new_job_name = validate_job_name(args.get("new_job_name"))
+    source_job_name = validate_job_name(args.get("source_job_name"))
 
     client.create_job_from_copy(new_job_name, source_job_name)
     return [types.TextContent(type="text", text=f"Successfully created job '{new_job_name}' from '{source_job_name}'")]
@@ -1127,12 +1144,15 @@ async def _tool_create_job_from_copy(client, args):
 
 async def _tool_create_job_from_data(client, args):
     """Create job from data"""
-    job_name = args.get("job_name")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
     config_data = args.get("config_data")
     root_tag = args.get("root_tag", "project")
 
-    if not job_name or config_data is None:
-        raise ValueError("Missing required arguments: job_name and config_data")
+    if config_data is None:
+        raise ValueError("Missing required argument: config_data")
+    if not isinstance(config_data, dict):
+        raise ValueError(f"config_data must be a dictionary, got {type(config_data).__name__}")
 
     client.create_job_from_dict(job_name, config_data, root_tag)
     return [types.TextContent(type="text", text=f"Successfully created job '{job_name}' from data")]
@@ -1140,9 +1160,8 @@ async def _tool_create_job_from_data(client, args):
 
 async def _tool_delete_job(client, args):
     """Delete a job"""
-    job_name = args.get("job_name")
-    if not job_name:
-        raise ValueError("Missing required argument: job_name")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
 
     client.delete_job(job_name)
     return [types.TextContent(type="text", text=f"Successfully deleted job '{job_name}'")]
@@ -1150,9 +1169,8 @@ async def _tool_delete_job(client, args):
 
 async def _tool_enable_job(client, args):
     """Enable a job"""
-    job_name = args.get("job_name")
-    if not job_name:
-        raise ValueError("Missing required argument: job_name")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
 
     client.enable_job(job_name)
     return [types.TextContent(type="text", text=f"Successfully enabled job '{job_name}'")]
@@ -1160,9 +1178,8 @@ async def _tool_enable_job(client, args):
 
 async def _tool_disable_job(client, args):
     """Disable a job"""
-    job_name = args.get("job_name")
-    if not job_name:
-        raise ValueError("Missing required argument: job_name")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
 
     client.disable_job(job_name)
     return [types.TextContent(type="text", text=f"Successfully disabled job '{job_name}'")]
@@ -1170,11 +1187,9 @@ async def _tool_disable_job(client, args):
 
 async def _tool_rename_job(client, args):
     """Rename a job"""
-    job_name = args.get("job_name")
-    new_name = args.get("new_name")
-
-    if not job_name or not new_name:
-        raise ValueError("Missing required arguments: job_name and new_name")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
+    new_name = validate_job_name(args.get("new_name"))
 
     client.rename_job(job_name, new_name)
     return [types.TextContent(type="text", text=f"Successfully renamed job '{job_name}' to '{new_name}'")]
@@ -1184,9 +1199,8 @@ async def _tool_rename_job(client, args):
 
 async def _tool_get_job_config(client, args):
     """Get job configuration"""
-    job_name = args.get("job_name")
-    if not job_name:
-        raise ValueError("Missing required argument: job_name")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
 
     config = client.get_job_config(job_name)
     return [types.TextContent(type="text", text=config)]
@@ -1194,11 +1208,9 @@ async def _tool_get_job_config(client, args):
 
 async def _tool_update_job_config(client, args):
     """Update job configuration"""
-    job_name = args.get("job_name")
-    config_xml = args.get("config_xml")
-
-    if not job_name or not config_xml:
-        raise ValueError("Missing required arguments: job_name and config_xml")
+    # Input validation
+    job_name = validate_job_name(args.get("job_name"))
+    config_xml = validate_config_xml(args.get("config_xml"))
 
     client.update_job_config(job_name, config_xml)
     return [types.TextContent(type="text", text=f"Successfully updated config for job '{job_name}'")]
@@ -1256,10 +1268,13 @@ async def _tool_list_nodes(client, args):
 
 async def _tool_get_node_info(client, args):
     """Get node information"""
+    # Input validation
     node_name = args.get("node_name")
-
     if not node_name:
         raise ValueError("Missing required argument: node_name")
+    if not isinstance(node_name, str):
+        raise ValueError(f"node_name must be a string, got {type(node_name).__name__}")
+    node_name = node_name.strip()
 
     node_info = client.get_node_info(node_name)
 
@@ -1313,6 +1328,7 @@ async def main():
     except Exception as e:
         logger.error(f"Server error: {e}", exc_info=True)
         sys.exit(1)
+
 
 # Health Check Tool (Quick Win #1)
 
