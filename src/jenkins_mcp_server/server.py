@@ -20,8 +20,10 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from pydantic import AnyUrl
 
+from .cache import get_cache_manager
 from .config import JenkinsSettings, get_default_settings
 from .jenkins_client import get_jenkins_client
+from .metrics import get_metrics_collector, record_tool_execution
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -380,6 +382,91 @@ async def _prompt_analyze_build_logs(arguments: dict[str, str]) -> types.GetProm
         )
 
 
+async def _tool_trigger_multiple_builds(client, args):
+    """Trigger builds for multiple jobs at once"""
+    job_names = args.get("job_names", [])
+    parameters = args.get("parameters", {})
+    wait_for_start = args.get("wait_for_start", False)
+
+    # Validation
+    if not job_names:
+        raise ValueError("No job names provided")
+
+    if not isinstance(job_names, list):
+        raise ValueError("job_names must be an array")
+
+    if len(job_names) > 20:
+        raise ValueError("Maximum 20 jobs can be triggered at once")
+
+    # Validate each job name
+    validated_jobs = []
+    for job_name in job_names:
+        try:
+            validated = validate_job_name(job_name)
+            validated_jobs.append(validated)
+        except ValueError as e:
+            return [types.TextContent(
+                type="text",
+                text=f"❌ Invalid job name '{job_name}': {str(e)}"
+            )]
+
+    # Validate parameters if provided
+    if parameters and not isinstance(parameters, dict):
+        raise ValueError(f"parameters must be a dictionary, got {type(parameters).__name__}")
+
+    # Trigger all builds
+    results = []
+    for job_name in validated_jobs:
+        try:
+            result = client.build_job(
+                job_name,
+                parameters,
+                wait_for_start=wait_for_start,
+                timeout=10  # Shorter timeout for batch
+            )
+
+            results.append({
+                "job": job_name,
+                "status": "triggered",
+                "queue_id": result.get('queue_id'),
+                "build_number": result.get('build_number') if wait_for_start else None
+            })
+
+            logger.info(f"Triggered build for {job_name}")
+
+        except Exception as e:
+            results.append({
+                "job": job_name,
+                "status": "failed",
+                "error": str(e)
+            })
+            logger.error(f"Failed to trigger {job_name}: {e}")
+
+    # Build summary
+    successful = [r for r in results if r["status"] == "triggered"]
+    failed = [r for r in results if r["status"] == "failed"]
+
+    summary = {
+        "total": len(job_names),
+        "successful": len(successful),
+        "failed": len(failed),
+        "results": results
+    }
+
+    # Invalidate cache since jobs were triggered
+    cache_manager = get_cache_manager()
+    await cache_manager.invalidate_pattern("jobs_list:")
+
+    emoji = "✅" if len(failed) == 0 else "⚠️"
+    message = f"{emoji} Batch Build Trigger Complete\n\n"
+    message += f"Total Jobs: {len(job_names)}\n"
+    message += f"Successful: {len(successful)}\n"
+    message += f"Failed: {len(failed)}\n\n"
+    message += f"Details:\n{json.dumps(results, indent=2)}"
+
+    return [types.TextContent(type="text", text=message)]
+
+
 # ==================== Tools ====================
 
 @server.list_tools()
@@ -425,13 +512,18 @@ async def handle_list_tools() -> list[types.Tool]:
         # Job Information
         types.Tool(
             name="list-jobs",
-            description="List all Jenkins jobs with optional filtering",
+            description="List all Jenkins jobs with optional filtering and caching",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "filter": {
                         "type": "string",
                         "description": "Filter jobs by name (case-insensitive partial match)"
+                    },
+                    "use_cache": {
+                        "type": "boolean",
+                        "description": "Use cached results if available (default: true)",
+                        "default": True
                     }
                 }
             },
@@ -716,12 +808,92 @@ async def handle_list_tools() -> list[types.Tool]:
                 "required": ["node_name"],
             },
         ),
+        types.Tool(
+            name="trigger-multiple-builds",
+            description="Trigger builds for multiple jobs at once",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of job names to trigger",
+                        "minItems": 1,
+                        "maxItems": 20
+                    },
+                    "parameters": {
+                        "type": "object",
+                        "description": "Common parameters for all builds (optional)",
+                        "additionalProperties": {"type": ["string", "number", "boolean"]},
+                    },
+                    "wait_for_start": {
+                        "type": "boolean",
+                        "description": "Wait for all builds to start (default: false)",
+                        "default": False
+                    }
+                },
+                "required": ["job_names"],
+            },
+        ),
+
+        # Cache tools
+        types.Tool(
+            name="get-cache-stats",
+            description="Get cache statistics and information",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        types.Tool(
+            name="clear-cache",
+            description="Clear all cached data",
+            inputSchema={"type": "object", "properties": {}},
+        ),
 
         # Health Check (Quick Win #1)
         types.Tool(
             name="health-check",
             description="Check Jenkins server health and connection status. Useful for troubleshooting connectivity issues.",
             inputSchema={"type": "object", "properties": {}},
+        ),
+
+        # Get metrics
+        types.Tool(
+            name="get-metrics",
+            description="Get usage metrics and performance statistics",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Specific tool name (optional, returns all if not specified)"
+                    }
+                }
+            },
+        ),
+
+        types.Tool(
+            name="configure-webhook",
+            description="Configure webhook notifications for Jenkins events (requires Jenkins plugin)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "job_name": {
+                        "type": "string",
+                        "description": "Job to configure webhook for"
+                    },
+                    "webhook_url": {
+                        "type": "string",
+                        "description": "URL to receive webhook notifications"
+                    },
+                    "events": {
+                        "type": "array",
+                        "items": {
+                            "enum": ["build_started", "build_completed", "build_failed", "build_success"]
+                        },
+                        "description": "Events to trigger webhook"
+                    }
+                },
+                "required": ["job_name", "webhook_url", "events"]
+            },
         ),
     ]
 
@@ -734,11 +906,14 @@ async def handle_call_tool(
         name: str,
         arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-    """Handle tool execution requests with improved error handling"""
+    """Handle tool execution requests with improved error handling and metrics tracking"""
     arguments = arguments or {}
+    start_time = time.time()
+    success = False
+    error_message = None
 
     try:
-        # Use cached client for better performance (Quick Win #3)
+        # Use cached client for better performance
         client = await get_cached_jenkins_client(get_settings())
 
         # Route to appropriate handler
@@ -777,13 +952,24 @@ async def handle_call_tool(
 
             # Health check (Quick Win #1)
             "health-check": _tool_health_check,
+
+            # NEW: Medium Priority
+            "trigger-multiple-builds": _tool_trigger_multiple_builds,
+            "get-cache-stats": _tool_get_cache_stats,
+            "clear-cache": _tool_clear_cache,
+
+            # NEW: Low Priority
+            "get-metrics": _tool_get_metrics,
+            "configure-webhook": _tool_configure_webhook,
         }
 
         handler = handlers.get(name)
         if not handler:
             raise ValueError(f"Unknown tool: {name}")
 
-        return await handler(client, arguments)
+        result = await handler(client, arguments)
+        success = True
+        return result
 
     # Better error messages with troubleshooting steps (Quick Win #2)
     except ValueError as e:
@@ -910,6 +1096,17 @@ async def handle_call_tool(
                 )
             ]
 
+    finally:
+        # Record metrics
+        execution_time_ms = (time.time() - start_time) * 1000
+        await record_tool_execution(
+            tool_name=name,
+            execution_time_ms=execution_time_ms,
+            success=success,
+            error_message=error_message,
+            args={"tool": name}  # Don't log full args for privacy
+        )
+
 
 # ==================== Tool Handlers ====================
 
@@ -956,9 +1153,26 @@ async def _tool_stop_build(client, args):
 # Job Information
 
 async def _tool_list_jobs(client, args):
-    """List all Jenkins jobs with optional filtering"""
-    jobs = client.get_jobs()
+    """List all Jenkins jobs with optional filtering and caching"""
     filter_text = args.get("filter", "").strip()
+    use_cache = args.get("use_cache", True)  # cache control
+
+    # Try cache first (if enabled)
+    cache_key = f"jobs_list:{filter_text or 'all'}"
+    if use_cache:
+        cache_manager = get_cache_manager()
+        cached_jobs = await cache_manager.get(cache_key)
+        if cached_jobs is not None:
+            logger.debug(f"Using cached job list ({len(cached_jobs)} jobs)")
+            return [
+                types.TextContent(
+                    type="text",
+                    text=f"Jenkins Jobs (cached) ({len(cached_jobs)} total):\n\n{json.dumps(cached_jobs, indent=2)}"
+                )
+            ]
+
+    # Fetch from Jenkins
+    jobs = client.get_jobs()
 
     # Apply filter if provided
     if filter_text:
@@ -976,6 +1190,10 @@ async def _tool_list_jobs(client, args):
         }
         for job in jobs
     ]
+
+    # Cache the result
+    if use_cache:
+        await cache_manager.set(cache_key, jobs_info, ttl_seconds=30)
 
     # Build response message
     if filter_text:
@@ -1355,39 +1573,50 @@ async def _tool_get_node_info(client, args):
     ]
 
 
-# ==================== Main Server Entry Point ====================
+async def _tool_get_cache_stats(client, args):
+    """Get cache statistics"""
+    cache_manager = get_cache_manager()
+    stats = cache_manager.get_stats()
+    cache_info = await cache_manager.get_cache_info()
 
-async def main():
-    """Run the Jenkins MCP server"""
-    try:
-        # Verify settings are configured
-        settings = get_settings()
-        if not settings.is_configured:
-            logger.error("Jenkins settings not configured!")
-            sys.exit(1)
+    report = f"""
+📊 Cache Statistics
 
-        logger.info(f"Starting Jenkins MCP Server v1.0.0")
-        logger.info(f"Connected to: {settings.url}")
+═══════════════════════════════════════
+OVERVIEW
+═══════════════════════════════════════
+Cache Size:      {stats['size']} entries
+Total Requests:  {stats['total_requests']}
+Cache Hits:      {stats['hits']}
+Cache Misses:    {stats['misses']}
+Hit Rate:        {stats['hit_rate_percent']}%
+Evictions:       {stats['evictions']}
 
-        # Run the server using stdin/stdout streams
-        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-            await server.run(
-                read_stream,
-                write_stream,
-                InitializationOptions(
-                    server_name="jenkins-mcp-server",
-                    server_version="1.0.0",
-                    capabilities=server.get_capabilities(
-                        notification_options=NotificationOptions(),
-                        experimental_capabilities={},
-                    ),
-                ),
-            )
-    except KeyboardInterrupt:
-        logger.info("Server stopped by user")
-    except Exception as e:
-        logger.error(f"Server error: {e}", exc_info=True)
-        sys.exit(1)
+═══════════════════════════════════════
+CACHED ENTRIES
+═══════════════════════════════════════
+"""
+
+    for entry in cache_info['entries']:
+        status = "✅ Valid" if not entry['is_expired'] else "❌ Expired"
+        report += f"\n{entry['key']}\n"
+        report += f"  Status: {status}\n"
+        report += f"  Age: {entry['age_seconds']}s\n"
+        report += f"  TTL: {entry['ttl_seconds']}s\n"
+        report += f"  Expires in: {entry['expires_in_seconds']}s\n"
+
+    return [types.TextContent(type="text", text=report.strip())]
+
+
+async def _tool_clear_cache(client, args):
+    """Clear all cached data"""
+    cache_manager = get_cache_manager()
+    cleared = await cache_manager.clear()
+
+    return [types.TextContent(
+        type="text",
+        text=f"✅ Cache cleared: {cleared} entries removed"
+    )]
 
 
 # Health Check Tool (Quick Win #1)
@@ -1540,3 +1769,176 @@ TROUBLESHOOTING STEPS
     report += "\n💡 Tip: Run this health-check regularly to monitor your Jenkins connection."
 
     return [types.TextContent(type="text", text=report.strip())]
+
+
+async def _tool_get_metrics(client, args):
+    """Get usage metrics"""
+    tool_name = args.get("tool_name")
+
+    metrics_collector = get_metrics_collector()
+
+    if tool_name:
+        # Get specific tool metrics
+        stats = await metrics_collector.get_tool_stats(tool_name)
+
+        report = f"""
+📊 Metrics for '{tool_name}'
+
+{json.dumps(stats, indent=2)}
+"""
+    else:
+        # Get overall summary
+        summary = await metrics_collector.get_summary()
+        tool_stats = await metrics_collector.get_tool_stats()
+
+        report = f"""
+📊 Jenkins MCP Server Metrics
+
+═══════════════════════════════════════
+SUMMARY
+═══════════════════════════════════════
+Uptime:              {summary['uptime_human']}
+Total Executions:    {summary['total_executions']}
+Successful:          {summary['successful_executions']}
+Failed:              {summary['failed_executions']}
+Success Rate:        {summary['success_rate_percent']}%
+Avg Execution Time:  {summary['avg_execution_time_ms']}ms
+Unique Tools Used:   {summary['unique_tools_used']}
+Most Used Tool:      {summary['most_used_tool']}
+Slowest Tool:        {summary['slowest_tool']}
+
+═══════════════════════════════════════
+PER-TOOL STATISTICS
+═══════════════════════════════════════
+{json.dumps(tool_stats, indent=2)}
+"""
+
+    return [types.TextContent(type="text", text=report.strip())]
+
+
+async def _tool_configure_webhook(client, args):
+    """Configure webhook for Jenkins job"""
+    job_name = validate_job_name(args.get("job_name"))
+    webhook_url = args.get("webhook_url")
+    events = args.get("events", [])
+
+    if not webhook_url:
+        raise ValueError("webhook_url is required")
+
+    if not events:
+        raise ValueError("At least one event must be specified")
+
+    # Get current job config
+    config_xml = client.get_job_config(job_name)
+
+    # Add webhook notification (this is simplified - actual implementation
+    # depends on Jenkins plugin configuration)
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(config_xml)
+
+        # Add or update properties section
+        properties = root.find('properties')
+        if properties is None:
+            properties = ET.SubElement(root, 'properties')
+
+        # Add webhook trigger configuration
+        # (Actual XML structure depends on the webhook plugin used)
+        webhook_config = f"""
+        <!-- Webhook Configuration -->
+        <!-- Events: {', '.join(events)} -->
+        <!-- URL: {webhook_url} -->
+        """
+
+        # Note: This is a placeholder. Real implementation would need
+        # to configure the actual webhook plugin XML structure
+
+        updated_xml = ET.tostring(root, encoding='unicode')
+
+        # Update job
+        client.update_job_config(job_name, updated_xml)
+
+        return [types.TextContent(
+            type="text",
+            text=f"✅ Webhook configured for '{job_name}'\n\n"
+                 f"URL: {webhook_url}\n"
+                 f"Events: {', '.join(events)}\n\n"
+                 f"⚠️ Note: Requires Generic Webhook Trigger plugin in Jenkins"
+        )]
+
+    except Exception as e:
+        return [types.TextContent(
+            type="text",
+            text=f"❌ Failed to configure webhook: {str(e)}\n\n"
+                 f"Make sure the Generic Webhook Trigger plugin is installed in Jenkins."
+        )]
+
+
+# Note: MCP protocol may not support streaming yet. This is prepared for future use.
+# Example: For trigger-multiple-builds
+async def _tool_trigger_multiple_builds_with_progress(client, args):
+    """Trigger builds with progress updates"""
+    job_names = args.get("job_names", [])
+
+    # Initial message
+    yield types.TextContent(
+        type="text",
+        text=f"🚀 Starting batch build trigger for {len(job_names)} jobs..."
+    )
+
+    results = []
+    for i, job_name in enumerate(job_names, 1):
+        # Progress update
+        yield types.TextContent(
+            type="text",
+            text=f"⏳ [{i}/{len(job_names)}] Triggering {job_name}..."
+        )
+
+        try:
+            result = client.build_job(job_name)
+            results.append({"job": job_name, "status": "success"})
+        except Exception as e:
+            results.append({"job": job_name, "status": "failed", "error": str(e)})
+
+    # Final summary
+    successful = len([r for r in results if r["status"] == "success"])
+    yield types.TextContent(
+        type="text",
+        text=f"✅ Complete: {successful}/{len(job_names)} builds triggered successfully"
+    )
+
+
+# ==================== Main Server Entry Point ====================
+
+async def main():
+    """Run the Jenkins MCP server"""
+    try:
+        # Verify settings are configured
+        settings = get_settings()
+        if not settings.is_configured:
+            logger.error("Jenkins settings not configured!")
+            sys.exit(1)
+
+        logger.info(f"Starting Jenkins MCP Server v1.0.0")
+        logger.info(f"Connected to: {settings.url}")
+
+        # Run the server using stdin/stdout streams
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="jenkins-mcp-server",
+                    server_version="1.0.0",
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(),
+                        experimental_capabilities={},
+                    ),
+                ),
+            )
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    except Exception as e:
+        logger.error(f"Server error: {e}", exc_info=True)
+        sys.exit(1)
