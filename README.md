@@ -7,7 +7,7 @@ Designed to work seamlessly with automation clients such as:
 - 🖥️ **Claude Desktop** - AI-powered Jenkins automation
 - 🔌 **Any MCP-compatible client** - Universal compatibility
 
-## ✨ What's New in v2.0
+## ✨ What's New in v1.1.0
 
 ### 🚀 Performance Enhancements
 - ⚡ **10x faster** - Client connection caching for repeated operations
