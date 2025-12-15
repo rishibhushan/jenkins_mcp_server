@@ -1,6 +1,6 @@
 {
   "name": "@rishibhushan/jenkins-mcp-server",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "AI-enabled Jenkins automation via Model Context Protocol (MCP)",
   "main": "bin/jenkins-mcp.js",
   "bin": {
@@ -9,13 +9,15 @@
   "scripts": {
     "start": "node bin/jenkins-mcp.js",
     "test": "python -m pytest tests/",
-    "build": "python -m build"
+    "build": "python -m build",
+    "prepack": "npm run clean",
+    "clean": "find . -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true; find . -type d -name '*.egg-info' -exec rm -rf {} + 2>/dev/null || true"
   },
   "files": [
     "bin/",
-    "src/",
+    "src/**/*.py",
+    "pyproject.toml",
     "requirements.txt",
-    "wheels/",
     "README.md",
     "LICENSE"
   ],
