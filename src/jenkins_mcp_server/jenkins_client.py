@@ -40,12 +40,14 @@ class JenkinsClient:
     timeout support.
     """
 
-    def __init__(self, settings: Optional[JenkinsSettings] = None):
+    def __init__(self, settings: Optional[JenkinsSettings] = None, test_connection: bool = False):
         """
         Initialize Jenkins client.
 
         Args:
             settings: JenkinsSettings instance. If None, uses default settings.
+            test_connection: If True, test connection during initialization.
+                            Set to False for MCP list_resources to avoid blocking.
 
         Raises:
             JenkinsConnectionError: If unable to connect to Jenkins
@@ -72,8 +74,10 @@ class JenkinsClient:
         # Cache for python-jenkins server instance
         self._server: Optional[jenkins.Jenkins] = None
 
-        # Test connection
-        self._test_connection()
+        # Only test connection if explicitly requested
+        # This prevents blocking during MCP initialization
+        if test_connection:
+            self._test_connection()
 
     def _test_connection(self) -> None:
         """Test connection to Jenkins server (with configurable timeout)"""
@@ -475,12 +479,16 @@ class JenkinsClient:
 _default_client: Optional[JenkinsClient] = None
 
 
-def get_jenkins_client(settings: Optional[JenkinsSettings] = None) -> JenkinsClient:
+def get_jenkins_client(
+        settings: Optional[JenkinsSettings] = None,
+        test_connection: bool = False
+) -> JenkinsClient:
     """
     Get Jenkins client instance.
 
     Args:
         settings: Optional JenkinsSettings. If None, uses default settings.
+        test_connection: If True, test connection during initialization.
 
     Returns:
         JenkinsClient instance
@@ -492,16 +500,10 @@ def get_jenkins_client(settings: Optional[JenkinsSettings] = None) -> JenkinsCli
 
     if settings is not None:
         # Always create new client with custom settings
-        return JenkinsClient(settings)
+        return JenkinsClient(settings, test_connection=test_connection)
 
     # Use cached default client
     if _default_client is None:
-        _default_client = JenkinsClient()
+        _default_client = JenkinsClient(test_connection=test_connection)
 
     return _default_client
-
-
-def reset_default_client() -> None:
-    """Reset the default client (useful for testing or reconfiguration)"""
-    global _default_client
-    _default_client = None

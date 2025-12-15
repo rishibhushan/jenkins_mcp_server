@@ -120,10 +120,15 @@ async def handle_list_resources() -> list[types.Resource]:
     """
     List available Jenkins resources.
     Each job is exposed as a resource with jenkins:// URI scheme.
+
+    Enhanced with timeout to prevent MCP initialization delays.
     """
     try:
-        client = get_jenkins_client(get_settings())
-        jobs = client.get_jobs()
+        # Wrap in async timeout to prevent blocking MCP initialization
+        async with asyncio.timeout(3):  # 3 second timeout
+            client = get_jenkins_client(get_settings())
+            # Run blocking get_jobs() in thread pool
+            jobs = await asyncio.to_thread(client.get_jobs)
 
         return [
             types.Resource(
@@ -134,13 +139,24 @@ async def handle_list_resources() -> list[types.Resource]:
             )
             for job in jobs
         ]
+    except asyncio.TimeoutError:
+        # Jenkins server not reachable (probably not on VPN/corporate network)
+        logger.warning("Jenkins server not reachable within 3 seconds - likely not on corporate network")
+        return [
+            types.Resource(
+                uri=AnyUrl("jenkins://offline"),
+                name="Jenkins Server Offline",
+                description="Jenkins server not reachable. Connect to VPN/corporate network and restart. Tools will still work when connected.",
+                mimeType="text/plain",
+            )
+        ]
     except Exception as e:
         logger.error(f"Failed to list resources: {e}")
         return [
             types.Resource(
                 uri=AnyUrl("jenkins://error"),
                 name="Error connecting to Jenkins",
-                description=f"Error: {str(e)}",
+                description=f"Error: {str(e)}. Check your configuration and network connection.",
                 mimeType="text/plain",
             )
         ]

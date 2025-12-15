@@ -532,6 +532,18 @@ function installDependencies(venvPath) {
 
   // Install package itself
   console.error('Installing jenkins-mcp-server package...');
+
+  // Verify pyproject.toml exists
+  const pyprojectPath = path.join(projectRoot, 'pyproject.toml');
+  if (!fs.existsSync(pyprojectPath)) {
+    error('pyproject.toml not found in project root');
+    console.error('\nProject root:', projectRoot);
+    console.error('Expected file:', pyprojectPath);
+    console.error('\nThis may be due to npx cache issues with special characters.');
+    console.error('Try clearing npx cache: npx clear-npx-cache');
+    process.exit(1);
+  }
+
   const packageArgs = ['install', '-e', '.'];
 
   const installPkg = spawnSync(pip, packageArgs, {
@@ -541,6 +553,20 @@ function installDependencies(venvPath) {
 
   if (installPkg.status !== 0) {
     error('Failed to install package');
+    console.error('\nProject root:', projectRoot);
+    console.error('Files in project root:');
+    try {
+      const files = fs.readdirSync(projectRoot);
+      console.error(files.join(', '));
+    } catch (e) {
+      console.error('Could not list files');
+    }
+
+    console.error('\n💡 TROUBLESHOOTING:');
+    console.error('1. The npx cache may have issues with the @ symbol in package name');
+    console.error('2. Try: npx clear-npx-cache && rm -rf ~/.npm/_npx');
+    console.error('3. Or install globally: npm install -g @rishibhushan/jenkins-mcp-server');
+    console.error('   Then run: jenkins-mcp-server --env-file /path/to/.env');
     process.exit(1);
   }
 
