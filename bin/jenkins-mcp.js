@@ -5,7 +5,8 @@
  * This wrapper handles:
  * - Python version detection (cross-platform)
  * - Virtual environment creation
- * - Dependency installation
+ * - Smart proxy detection and handling (auto-detects corporate vs public networks)
+ * - Dependency installation with retry logic
  * - Server execution
  *
  * Supports: Windows, macOS, Linux
@@ -26,7 +27,9 @@ const colors = {
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   red: '\x1b[31m',
-  blue: '\x1b[34m'
+  blue: '\x1b[34m',
+  cyan: '\x1b[36m',
+  bold: '\x1b[1m'
 };
 
 function log(message, color = 'reset') {
@@ -38,6 +41,93 @@ function log(message, color = 'reset') {
 
 function error(message) {
   console.error(`${colors.red}ERROR: ${message}${colors.reset}`);
+}
+
+function warning(message) {
+  console.error(`${colors.yellow}WARNING: ${message}${colors.reset}`);
+}
+
+function info(message) {
+  console.error(`${colors.cyan}ℹ ${message}${colors.reset}`);
+}
+
+/**
+ * Detect and display proxy configuration
+ * @returns {Object} Proxy configuration details
+ */
+function detectProxyConfig() {
+  const proxyVars = [
+    'HTTP_PROXY', 'http_proxy',
+    'HTTPS_PROXY', 'https_proxy',
+    'ALL_PROXY', 'all_proxy',
+    'NO_PROXY', 'no_proxy'
+  ];
+
+  const activeProxies = {};
+  for (const varName of proxyVars) {
+    if (process.env[varName]) {
+      activeProxies[varName] = process.env[varName];
+    }
+  }
+
+  return activeProxies;
+}
+
+/**
+ * Test if proxy is reachable
+ * @param {string} proxyUrl - Proxy URL to test
+ * @returns {boolean} True if proxy is reachable
+ */
+function testProxyConnectivity(proxyUrl) {
+  try {
+    // Try to parse proxy URL
+    const url = new URL(proxyUrl);
+
+    // Use curl to test proxy connectivity (cross-platform)
+    const testCmd = isWindows
+      ? `curl -s -o NUL -w "%{http_code}" --proxy ${proxyUrl} --max-time 5 https://pypi.org/simple/`
+      : `curl -s -o /dev/null -w "%{http_code}" --proxy ${proxyUrl} --max-time 5 https://pypi.org/simple/`;
+
+    const result = spawnSync(isWindows ? 'cmd' : 'sh',
+      isWindows ? ['/c', testCmd] : ['-c', testCmd],
+      {
+        stdio: 'pipe',
+        encoding: 'utf-8',
+        timeout: 6000
+      }
+    );
+
+    const httpCode = result.stdout?.trim();
+    return httpCode === '200' || httpCode === '301' || httpCode === '302';
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Test if PyPI is directly accessible (without proxy)
+ * @returns {boolean} True if PyPI is accessible
+ */
+function testDirectPyPIAccess() {
+  try {
+    const testCmd = isWindows
+      ? 'curl -s -o NUL -w "%{http_code}" --max-time 5 https://pypi.org/simple/'
+      : 'curl -s -o /dev/null -w "%{http_code}" --max-time 5 https://pypi.org/simple/';
+
+    const result = spawnSync(isWindows ? 'cmd' : 'sh',
+      isWindows ? ['/c', testCmd] : ['-c', testCmd],
+      {
+        stdio: 'pipe',
+        encoding: 'utf-8',
+        timeout: 6000
+      }
+    );
+
+    const httpCode = result.stdout?.trim();
+    return httpCode === '200' || httpCode === '301' || httpCode === '302';
+  } catch (e) {
+    return false;
+  }
 }
 
 /**
@@ -157,7 +247,89 @@ function dependenciesInstalled(pipPath) {
 }
 
 /**
- * Install Python dependencies
+ * Show helpful guidance for proxy-related installation failures
+ */
+function showProxyTroubleshooting(activeProxies, canAccessDirectly, proxyWorks) {
+  console.error('\n' + '='.repeat(70));
+  console.error(colors.bold + colors.yellow + 'INSTALLATION FAILED - NETWORK CONFIGURATION ISSUE' + colors.reset);
+  console.error('='.repeat(70));
+
+  if (Object.keys(activeProxies).length > 0) {
+    console.error('\n📡 Active proxy environment variables found:');
+    for (const [key, value] of Object.entries(activeProxies)) {
+      console.error(`   ${colors.cyan}${key}${colors.reset} = ${value}`);
+    }
+
+    if (!proxyWorks && canAccessDirectly) {
+      // Proxy is set but doesn't work, and direct access works
+      console.error('\n' + colors.red + '❌ Proxy is NOT reachable' + colors.reset);
+      console.error(colors.green + '✓ Direct internet access IS available' + colors.reset);
+      console.error('\n' + colors.yellow + '⚠️  You\'re on a PUBLIC network but have proxy settings from a corporate/VPN network!' + colors.reset);
+      console.error('\n💡 SOLUTION:\n');
+      console.error(colors.bold + 'Remove the proxy settings:' + colors.reset);
+      console.error(colors.cyan + '   unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy' + colors.reset);
+      console.error('   Then run the command again.\n');
+
+    } else if (proxyWorks && !canAccessDirectly) {
+      // Proxy works, direct access doesn't
+      console.error('\n' + colors.green + '✓ Proxy IS reachable' + colors.reset);
+      console.error(colors.red + '❌ Direct internet access is NOT available' + colors.reset);
+      console.error('\n' + colors.blue + 'You\'re on a CORPORATE network - proxy is required.' + colors.reset);
+      console.error('\n💡 SOLUTION:\n');
+      console.error('The proxy should work. The error may be due to:');
+      console.error('1. SSL certificate issues - contact your IT department');
+      console.error('2. Authentication required - check if proxy needs username/password');
+      console.error('3. Specific packages blocked - contact your IT department\n');
+
+    } else if (!proxyWorks && !canAccessDirectly) {
+      // Neither works
+      console.error('\n' + colors.red + '❌ Proxy is NOT reachable' + colors.reset);
+      console.error(colors.red + '❌ Direct internet access is NOT available' + colors.reset);
+      console.error('\n💡 SOLUTIONS:\n');
+      console.error('1. Check your internet connection');
+      console.error('2. If on corporate network, verify proxy settings with IT');
+      console.error('3. Try a different network (mobile hotspot, home WiFi)');
+      console.error('4. Check firewall/antivirus settings\n');
+
+    } else {
+      // Both work (unusual case)
+      console.error('\n' + colors.green + '✓ Proxy IS reachable' + colors.reset);
+      console.error(colors.green + '✓ Direct internet access IS available' + colors.reset);
+      console.error('\nThe issue may be:');
+      console.error('1. SSL certificate problems');
+      console.error('2. Intermittent connectivity');
+      console.error('3. Package-specific blocking\n');
+    }
+
+    console.error(colors.bold + 'Additional options:' + colors.reset);
+    console.error('• Check system proxy settings:');
+    if (!isWindows) {
+      console.error('  macOS: System Settings → Network → Advanced → Proxies');
+    } else {
+      console.error('  Windows: Settings → Network & Internet → Proxy');
+    }
+    console.error('• Try manual installation (see TROUBLESHOOTING.md)');
+
+  } else {
+    console.error('\n💡 No proxy environment variables detected.\n');
+    console.error('POSSIBLE CAUSES:');
+    console.error('• Network connectivity issues');
+    console.error('• Firewall blocking PyPI access');
+    console.error('• DNS resolution problems');
+    console.error('• System-level proxy (not in environment variables)\n');
+
+    console.error('SOLUTIONS TO TRY:');
+    console.error('1. Check your internet connection');
+    console.error('2. Try: curl https://pypi.org/simple/');
+    console.error('3. Check firewall/antivirus settings');
+    console.error('4. Check system proxy settings (not environment variables)\n');
+  }
+
+  console.error('='.repeat(70) + '\n');
+}
+
+/**
+ * Install Python dependencies with smart proxy detection
  * @param {string} venvPath - Path to virtual environment
  */
 function installDependencies(venvPath) {
@@ -171,11 +343,10 @@ function installDependencies(venvPath) {
   if (fs.existsSync(wheelsPath)) {
     console.error('Using pre-packaged wheels (no internet required)...');
 
-    // Install from local wheels (fast, no network needed)
     const installReqs = spawnSync(pip, [
       'install',
-      '--no-index',  // Don't use PyPI
-      '--find-links', wheelsPath,  // Use local wheels
+      '--no-index',
+      '--find-links', wheelsPath,
       '-r', requirementsPath
     ], {
       cwd: projectRoot,
@@ -186,35 +357,96 @@ function installDependencies(venvPath) {
       error('Failed to install from wheels');
       process.exit(1);
     }
+
+    log('✓ Requirements installed', 'green');
   } else {
-    // Fallback to normal install with proxy support
+    // Need network - detect proxy configuration intelligently
     console.error('Downloading from PyPI...');
+
+    const activeProxies = detectProxyConfig();
+    const hasProxyVars = Object.keys(activeProxies).length > 0;
+
+    let proxyToUse = null;
+    let useNoProxy = false;
+
+    if (hasProxyVars) {
+      const proxyUrl = process.env.HTTP_PROXY || process.env.http_proxy ||
+                       process.env.HTTPS_PROXY || process.env.https_proxy;
+
+      info('Proxy environment variables detected. Testing connectivity...');
+
+      // Test proxy connectivity
+      const proxyWorks = proxyUrl && proxyUrl.startsWith('http') && testProxyConnectivity(proxyUrl);
+      const directWorks = testDirectPyPIAccess();
+
+      if (proxyWorks && !directWorks) {
+        // Corporate network - use proxy
+        info('Corporate network detected. Using proxy.');
+        proxyToUse = proxyUrl;
+      } else if (!proxyWorks && directWorks) {
+        // Public network with stale proxy vars - ignore proxy
+        warning('Proxy unreachable but direct access available. Ignoring proxy settings.');
+        useNoProxy = true;
+      } else if (proxyWorks && directWorks) {
+        // Both work - prefer direct
+        info('Both proxy and direct access available. Using direct connection.');
+        useNoProxy = true;
+      } else {
+        // Neither works - will fail but try direct
+        warning('Neither proxy nor direct access working. Attempting direct connection...');
+        useNoProxy = true;
+      }
+    }
+
+    // Build pip arguments
     const pipArgs = ['install', '-r', requirementsPath];
 
-    const proxyFriendlyArgs = [
+    // Trusted hosts for SSL-friendly installation
+    const trustedHostArgs = [
       '--trusted-host', 'pypi.org',
       '--trusted-host', 'pypi.python.org',
       '--trusted-host', 'files.pythonhosted.org'
     ];
+    pipArgs.push(...trustedHostArgs);
 
-    const proxy = process.env.HTTP_PROXY || process.env.http_proxy;
-    if (proxy) {
-      pipArgs.push('--proxy', proxy);
+    // Add proxy if needed
+    if (proxyToUse && !useNoProxy) {
+      info(`Using proxy: ${proxyToUse}`);
+      pipArgs.push('--proxy', proxyToUse);
     }
-    pipArgs.push(...proxyFriendlyArgs);
+
+    // Set up environment (potentially removing proxy vars)
+    const pipEnv = { ...process.env };
+    if (useNoProxy) {
+      // Remove proxy environment variables for this pip call
+      delete pipEnv.HTTP_PROXY;
+      delete pipEnv.HTTPS_PROXY;
+      delete pipEnv.http_proxy;
+      delete pipEnv.https_proxy;
+      delete pipEnv.ALL_PROXY;
+      delete pipEnv.all_proxy;
+    }
 
     const installReqs = spawnSync(pip, pipArgs, {
       cwd: projectRoot,
-      stdio: 'inherit'
+      stdio: 'inherit',
+      env: pipEnv
     });
 
     if (installReqs.status !== 0) {
-      error('Failed to install dependencies');
+      error('Failed to install dependencies from PyPI');
+
+      // Show intelligent troubleshooting
+      const proxyUrl = process.env.HTTP_PROXY || process.env.http_proxy;
+      const proxyWorks = proxyUrl ? testProxyConnectivity(proxyUrl) : false;
+      const directWorks = testDirectPyPIAccess();
+
+      showProxyTroubleshooting(activeProxies, directWorks, proxyWorks);
       process.exit(1);
     }
-  }
 
-  console.error('✓ Requirements installed');
+    log('✓ Requirements installed', 'green');
+  }
 
   // Install package itself
   console.error('Installing jenkins-mcp-server package...');
@@ -230,7 +462,7 @@ function installDependencies(venvPath) {
     process.exit(1);
   }
 
-  console.error('✓ Package installed');
+  log('✓ Package installed successfully', 'green');
 }
 
 /**
