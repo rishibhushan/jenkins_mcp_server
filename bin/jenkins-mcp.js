@@ -74,6 +74,62 @@ function detectProxyConfig() {
 }
 
 /**
+ * Check npm config for proxy settings
+ * @returns {Object} npm proxy configuration
+ */
+function checkNpmProxy() {
+  try {
+    const result = spawnSync('npm', ['config', 'list'], {
+      stdio: 'pipe',
+      encoding: 'utf-8'
+    });
+
+    if (result.status === 0) {
+      const output = result.stdout || '';
+      const proxyLines = output.split('\n').filter(line =>
+        line.toLowerCase().includes('proxy') && !line.includes('; ///')
+      );
+
+      if (proxyLines.length > 0) {
+        return {
+          found: true,
+          config: proxyLines.join('\n')
+        };
+      }
+    }
+  } catch (e) {
+    // npm not available or error
+  }
+  return { found: false };
+}
+
+/**
+ * Check pip config for proxy settings
+ * @returns {Object} pip proxy configuration
+ */
+function checkPipProxy() {
+  try {
+    const result = spawnSync('pip3', ['config', 'list'], {
+      stdio: 'pipe',
+      encoding: 'utf-8'
+    });
+
+    if (result.status === 0) {
+      const output = result.stdout || '';
+      if (output.toLowerCase().includes('proxy')) {
+        return {
+          found: true,
+          config: output
+        };
+      }
+    }
+  } catch (e) {
+    // pip not available or error
+  }
+  return { found: false };
+}
+
+/**
  * Test if proxy is reachable
  * @param {string} proxyUrl - Proxy URL to test
  * @returns {boolean} True if proxy is reachable
@@ -253,6 +309,32 @@ function showProxyTroubleshooting(activeProxies, canAccessDirectly, proxyWorks) 
   console.error('\n' + '='.repeat(70));
   console.error(colors.bold + colors.yellow + 'INSTALLATION FAILED - NETWORK CONFIGURATION ISSUE' + colors.reset);
   console.error('='.repeat(70));
+
+  // Check npm and pip config
+  const npmProxy = checkNpmProxy();
+  const pipProxy = checkPipProxy();
+
+  if (npmProxy.found) {
+    console.error('\n' + colors.red + '⚠️  FOUND PROXY IN NPM CONFIG!' + colors.reset);
+    console.error(colors.cyan + npmProxy.config + colors.reset);
+    console.error('\n' + colors.yellow + 'This is likely the cause of your issue!' + colors.reset);
+    console.error('\n' + colors.bold + 'FIX (run these commands):' + colors.reset);
+    console.error(colors.cyan + '  npm config delete proxy' + colors.reset);
+    console.error(colors.cyan + '  npm config delete https-proxy' + colors.reset);
+    console.error(colors.cyan + '  npm config delete http-proxy' + colors.reset);
+    console.error(colors.cyan + '  npm config --global delete proxy' + colors.reset);
+    console.error(colors.cyan + '  npm config --global delete https-proxy' + colors.reset);
+    console.error('\nThen run your command again.\n');
+  }
+
+  if (pipProxy.found) {
+    console.error('\n' + colors.red + '⚠️  FOUND PROXY IN PIP CONFIG!' + colors.reset);
+    console.error(colors.cyan + pipProxy.config + colors.reset);
+    console.error('\n' + colors.bold + 'FIX (run these commands):' + colors.reset);
+    console.error(colors.cyan + '  pip3 config unset global.proxy' + colors.reset);
+    console.error(colors.cyan + '  pip3 config unset user.proxy' + colors.reset);
+    console.error('\nOr edit/delete: ~/.config/pip/pip.conf\n');
+  }
 
   if (Object.keys(activeProxies).length > 0) {
     console.error('\n📡 Active proxy environment variables found:');
