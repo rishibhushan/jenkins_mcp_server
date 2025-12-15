@@ -261,7 +261,7 @@ function ensureVenv(pythonCmd) {
 
   const result = spawnSync(pythonCmd, ['-m', 'venv', venvPath], {
     cwd: projectRoot,
-    stdio: 'inherit'
+    stdio: ['ignore', 'pipe', 'inherit']
   });
 
   if (result.status !== 0) {
@@ -432,7 +432,7 @@ function installDependencies(venvPath) {
       '-r', requirementsPath
     ], {
       cwd: projectRoot,
-      stdio: 'inherit'
+      stdio: ['ignore', 'pipe', 'inherit']
     });
 
     if (installReqs.status !== 0) {
@@ -511,7 +511,7 @@ function installDependencies(venvPath) {
 
     const installReqs = spawnSync(pip, pipArgs, {
       cwd: projectRoot,
-      stdio: 'inherit',
+      stdio: ['ignore', 'pipe', 'inherit'],
       env: pipEnv
     });
 
@@ -548,7 +548,7 @@ function installDependencies(venvPath) {
 
   const installPkg = spawnSync(pip, packageArgs, {
     cwd: projectRoot,
-    stdio: 'inherit'
+    stdio: ['ignore', 'pipe', 'inherit']
   });
 
   if (installPkg.status !== 0) {
