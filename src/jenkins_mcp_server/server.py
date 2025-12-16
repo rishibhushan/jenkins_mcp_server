@@ -1930,17 +1930,28 @@ async def _tool_trigger_multiple_builds_with_progress(client, args):
 async def main():
     """Run the Jenkins MCP server"""
     try:
+        # Add explicit stderr debug
+        print("=== main() entered ===", file=sys.stderr, flush=True)
+
         # Verify settings are configured
         settings = get_settings()
+        print(f"=== Settings verified: {settings.is_configured} ===", file=sys.stderr, flush=True)
+
         if not settings.is_configured:
             logger.error("Jenkins settings not configured!")
             sys.exit(1)
 
+        print(f"=== About to log startup message ===", file=sys.stderr, flush=True)
         logger.info(f"Starting Jenkins MCP Server v1.0.0")
         logger.info(f"Connected to: {settings.url}")
+        print(f"=== Startup messages logged ===", file=sys.stderr, flush=True)
 
         # Run the server using stdin/stdout streams
+        print("=== About to create stdio_server ===", file=sys.stderr, flush=True)
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            print("=== stdio_server created ===", file=sys.stderr, flush=True)
+            print("=== About to call server.run() ===", file=sys.stderr, flush=True)
+
             await server.run(
                 read_stream,
                 write_stream,
@@ -1953,6 +1964,7 @@ async def main():
                     ),
                 ),
             )
+            print("=== server.run() completed ===", file=sys.stderr, flush=True)
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
     except Exception as e:
