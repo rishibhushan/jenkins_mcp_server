@@ -119,47 +119,17 @@ def validate_config_xml(config_xml: any) -> str:
 async def handle_list_resources() -> list[types.Resource]:
     """
     List available Jenkins resources.
-    Each job is exposed as a resource with jenkins:// URI scheme.
 
-    Enhanced with timeout to prevent MCP initialization delays.
+    Returns a static resource - use tools for actual job discovery.
     """
-    try:
-        # Wrap in async timeout to prevent blocking MCP initialization
-        async with asyncio.timeout(3):  # 3 second timeout
-            client = get_jenkins_client(get_settings())
-            # Run blocking get_jobs() in thread pool
-            jobs = await asyncio.to_thread(client.get_jobs)
-
-        return [
-            types.Resource(
-                uri=AnyUrl(f"jenkins://job/{job['name']}"),
-                name=f"Job: {job['name']}",
-                description=f"Jenkins job: {job['name']} (status: {job.get('color', 'unknown')})",
-                mimeType="application/json",
-            )
-            for job in jobs
-        ]
-    except asyncio.TimeoutError:
-        # Jenkins server not reachable (probably not on VPN/corporate network)
-        logger.warning("Jenkins server not reachable within 3 seconds - likely not on corporate network")
-        return [
-            types.Resource(
-                uri=AnyUrl("jenkins://offline"),
-                name="Jenkins Server Offline",
-                description="Jenkins server not reachable. Connect to VPN/corporate network and restart. Tools will still work when connected.",
-                mimeType="text/plain",
-            )
-        ]
-    except Exception as e:
-        logger.error(f"Failed to list resources: {e}")
-        return [
-            types.Resource(
-                uri=AnyUrl("jenkins://error"),
-                name="Error connecting to Jenkins",
-                description=f"Error: {str(e)}. Check your configuration and network connection.",
-                mimeType="text/plain",
-            )
-        ]
+    return [
+        types.Resource(
+            uri=AnyUrl("jenkins://jobs"),
+            name="Jenkins Jobs",
+            description="Use 'list-jobs' tool to see available jobs. This server provides 26 Jenkins automation tools.",
+            mimeType="text/plain",
+        )
+    ]
 
 
 @server.read_resource()
@@ -488,6 +458,7 @@ async def _tool_trigger_multiple_builds(client, args):
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     """List available tools for interacting with Jenkins"""
+    print("=== list_tools CALLED ===", file=sys.stderr, flush=True)
     tools = [
         # Build Operations
         types.Tool(
