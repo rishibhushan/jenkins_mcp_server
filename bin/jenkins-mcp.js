@@ -29,8 +29,38 @@ const pythonPath = path.join(
 );
 
 if (!fs.existsSync(pythonPath)) {
-  console.error("[jenkins-mcp] ERROR: Python venv not found at:", pythonPath);
-  process.exit(1);
+  console.error("[jenkins-mcp] Python venv not found, bootstrapping...");
+
+  const bootstrap = spawn("python3", ["-m", "venv", ".venv"], {
+    cwd: PACKAGE_ROOT,
+    stdio: "inherit",
+  });
+
+  bootstrap.on("exit", (code) => {
+    if (code !== 0) {
+      console.error("[jenkins-mcp] Failed to create venv");
+      process.exit(1);
+    }
+
+    const pip = path.join(PACKAGE_ROOT, ".venv", "bin", "pip");
+
+    spawn(pip, ["install", "-r", "requirements.txt"], {
+      cwd: PACKAGE_ROOT,
+      stdio: "inherit",
+    }).on("exit", (pipCode) => {
+      if (pipCode !== 0) {
+        console.error("[jenkins-mcp] Failed to install dependencies");
+        process.exit(1);
+      }
+
+      // Re-exec self after bootstrap
+      spawn(process.execPath, process.argv.slice(1), {
+        stdio: "inherit",
+      });
+    });
+  });
+
+  return;
 }
 
 /**
