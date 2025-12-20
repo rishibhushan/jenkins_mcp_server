@@ -44,23 +44,27 @@ if (!fs.existsSync(pythonPath)) {
 
     const pip = path.join(PACKAGE_ROOT, ".venv", "bin", "pip");
 
-    spawn(pip, ["install", "-r", "requirements.txt"], {
+    const install = spawn(pip, ["install", "-r", "requirements.txt"], {
       cwd: PACKAGE_ROOT,
       stdio: "inherit",
-    }).on("exit", (pipCode) => {
+    });
+
+    install.on("exit", (pipCode) => {
       if (pipCode !== 0) {
         console.error("[jenkins-mcp] Failed to install dependencies");
         process.exit(1);
       }
 
-      // Re-exec self after bootstrap
+      console.error("[jenkins-mcp] Bootstrap complete, restarting...");
+
       spawn(process.execPath, process.argv.slice(1), {
         stdio: "inherit",
       });
+      process.exit(0);
     });
   });
 
-  return;
+  process.exit(0);
 }
 
 /**
