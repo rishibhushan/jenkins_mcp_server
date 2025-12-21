@@ -28,9 +28,21 @@ const pythonPath = path.join(
   "python"
 );
 
-async function run(cmd, args, cwd) {
+function run(cmd, args, cwd) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, stdio: "inherit" });
+    const p = spawn(cmd, args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"], // no stdout leakage
+    });
+
+    p.stdout.on("data", (d) => {
+      console.error(d.toString()); // redirect to stderr
+    });
+
+    p.stderr.on("data", (d) => {
+      console.error(d.toString());
+    });
+
     p.on("exit", (code) =>
       code === 0 ? resolve() : reject(new Error(`${cmd} failed`))
     );
