@@ -38,18 +38,19 @@ async function run(cmd, args, cwd) {
 }
 
 async function ensureVenv() {
-  if (fs.existsSync(pythonPath)) {
-    return;
+  if (!fs.existsSync(pythonPath)) {
+    console.error("[jenkins-mcp] Python venv not found, creating...");
+    await run("python3", ["-m", "venv", ".venv"], PACKAGE_ROOT);
+  } else {
+    console.error("[jenkins-mcp] Python venv exists, ensuring dependencies...");
   }
 
-  console.error("[jenkins-mcp] Python venv not found, bootstrapping...");
-
-  await run("python3", ["-m", "venv", ".venv"], PACKAGE_ROOT);
-
   const pip = path.join(PACKAGE_ROOT, ".venv", "bin", "pip");
+
+  // Always ensure dependencies are installed (idempotent)
   await run(pip, ["install", "-r", "requirements.txt"], PACKAGE_ROOT);
 
-  console.error("[jenkins-mcp] Bootstrap complete");
+  console.error("[jenkins-mcp] Python environment ready");
 }
 
 (async () => {
