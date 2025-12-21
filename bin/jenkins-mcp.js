@@ -28,87 +28,81 @@ const pythonPath = path.join(
   "python"
 );
 
-if (!fs.existsSync(pythonPath)) {
-  console.error("[jenkins-mcp] Python venv not found, bootstrapping...");
-
-  const bootstrap = spawn("python3", ["-m", "venv", ".venv"], {
-    cwd: PACKAGE_ROOT,
-    stdio: "inherit",
+async function run(cmd, args, cwd) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, { cwd, stdio: "inherit" });
+    p.on("exit", (code) =>
+      code === 0 ? resolve() : reject(new Error(`${cmd} failed`))
+    );
   });
-
-  bootstrap.on("exit", (code) => {
-    if (code !== 0) {
-      console.error("[jenkins-mcp] Failed to create venv");
-      process.exit(1);
-    }
-
-    const pip = path.join(PACKAGE_ROOT, ".venv", "bin", "pip");
-
-    const install = spawn(pip, ["install", "-r", "requirements.txt"], {
-      cwd: PACKAGE_ROOT,
-      stdio: "inherit",
-    });
-
-    install.on("exit", (pipCode) => {
-      if (pipCode !== 0) {
-        console.error("[jenkins-mcp] Failed to install dependencies");
-        process.exit(1);
-      }
-
-      console.error("[jenkins-mcp] Bootstrap complete, restarting...");
-
-      spawn(process.execPath, process.argv.slice(1), {
-        stdio: "inherit",
-      });
-      process.exit(0);
-    });
-  });
-
-  process.exit(0);
 }
 
-/**
- * Forward CLI arguments (e.g. --env-file ...)
- */
-const args = process.argv.slice(2);
+async function ensureVenv() {
+  if (fs.existsSync(pythonPath)) {
+    return;
+  }
 
-/**
- * Final Python command:
- *   python -m jenkins_mcp_server <args>
- */
-const pythonArgs = [
-  "-m",
-  "jenkins_mcp_server",
-  ...args,
-];
+  console.error("[jenkins-mcp] Python venv not found, bootstrapping...");
 
-console.error("[jenkins-mcp] Python:", pythonPath);
-console.error("[jenkins-mcp] Args:", pythonArgs.join(" "));
+  await run("python3", ["-m", "venv", ".venv"], PACKAGE_ROOT);
 
-/**
- * Spawn Python MCP server
- */
-const child = spawn(pythonPath, pythonArgs, {
-  cwd: PACKAGE_ROOT, // 🔑 critical
-  env: {
-    ...process.env,
-    PYTHONPATH: path.join(PACKAGE_ROOT, "src"), // 🔑 critical
-  },
-  stdio: ["inherit", "inherit", "inherit"], // MCP stdio
-});
+  const pip = path.join(PACKAGE_ROOT, ".venv", "bin", "pip");
+  await run(pip, ["install", "-r", "requirements.txt"], PACKAGE_ROOT);
 
-/**
- * Propagate exit code
- */
-child.on("exit", (code, signal) => {
-  if (signal) {
-    console.error("[jenkins-mcp] exited due to signal:", signal);
+  console.error("[jenkins-mcp] Bootstrap complete");
+}
+
+(async () => {
+  try {
+    await ensureVenv();
+  } catch (err) {
+    console.error("[jenkins-mcp] Bootstrap failed:", err);
     process.exit(1);
   }
-  process.exit(code ?? 0);
-});
 
-child.on("error", (err) => {
-  console.error("[jenkins-mcp] failed to start:", err);
-  process.exit(1);
-});
+  /**
+   * Forward CLI arguments (e.g. --env-file ...)
+   */
+  const args = process.argv.slice(2);
+
+  /**
+   * Final Python command:
+   *   python -m jenkins_mcp_server <args>
+   */
+  const pythonArgs = [
+    "-m",
+    "jenkins_mcp_server",
+    ...args,
+  ];
+
+  console.error("[jenkins-mcp] Python:", pythonPath);
+  console.error("[jenkins-mcp] Args:", pythonArgs.join(" "));
+
+  /**
+   * Spawn Python MCP server
+   */
+  const child = spawn(pythonPath, pythonArgs, {
+    cwd: PACKAGE_ROOT, // 🔑 critical
+    env: {
+      ...process.env,
+      PYTHONPATH: path.join(PACKAGE_ROOT, "src"), // 🔑 critical
+    },
+    stdio: ["inherit", "inherit", "inherit"], // MCP stdio
+  });
+
+  /**
+   * Propagate exit code
+   */
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      console.error("[jenkins-mcp] exited due to signal:", signal);
+      process.exit(1);
+    }
+    process.exit(code ?? 0);
+  });
+
+  child.on("error", (err) => {
+    console.error("[jenkins-mcp] failed to start:", err);
+    process.exit(1);
+  });
+})();
