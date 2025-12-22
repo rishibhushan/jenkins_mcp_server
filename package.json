@@ -1,6 +1,6 @@
 {
   "name": "@rishibhushan/jenkins-mcp-server",
-  "version": "1.1.13",
+  "version": "1.1.14",
   "description": "AI-enabled Jenkins automation via Model Context Protocol (MCP)",
   "main": "bin/jenkins-mcp.js",
   "bin": {
