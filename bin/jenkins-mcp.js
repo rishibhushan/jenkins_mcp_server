@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
  * Resolve paths relative to the *installed package*,
  * NOT the caller's current working directory.
  */
+const IS_WINDOWS = process.platform === "win32";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PACKAGE_ROOT = path.resolve(__dirname, "..");
@@ -21,12 +22,9 @@ console.error("[jenkins-mcp] package root:", PACKAGE_ROOT);
 /**
  * Resolve Python executable inside packaged venv
  */
-const pythonPath = path.join(
-  PACKAGE_ROOT,
-  ".venv",
-  "bin",
-  "python"
-);
+const pythonPath = IS_WINDOWS
+  ? path.join(PACKAGE_ROOT, ".venv", "Scripts", "python.exe")
+  : path.join(PACKAGE_ROOT, ".venv", "bin", "python");
 
 function run(cmd, args, cwd) {
   return new Promise((resolve, reject) => {
@@ -57,10 +55,11 @@ async function ensureVenv() {
     console.error("[jenkins-mcp] Python venv exists, ensuring dependencies...");
   }
 
-  const pip = path.join(PACKAGE_ROOT, ".venv", "bin", "pip");
-
-  // Always ensure dependencies are installed (idempotent)
-  await run(pip, ["install", "-r", "requirements.txt"], PACKAGE_ROOT);
+  await run(
+    pythonPath,
+    ["-m", "pip", "install", "-r", "requirements.txt"],
+    PACKAGE_ROOT
+  );
 
   console.error("[jenkins-mcp] Python environment ready");
 }
