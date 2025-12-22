@@ -50,7 +50,8 @@ function run(cmd, args, cwd) {
 async function ensureVenv() {
   if (!fs.existsSync(pythonPath)) {
     console.error("[jenkins-mcp] Python venv not found, creating...");
-    await run("python3", ["-m", "venv", ".venv"], PACKAGE_ROOT);
+    const venvPython = IS_WINDOWS ? "python" : "python3";
+    await run(venvPython, ["-m", "venv", ".venv"], PACKAGE_ROOT);
   } else {
     console.error("[jenkins-mcp] Python venv exists, ensuring dependencies...");
   }
