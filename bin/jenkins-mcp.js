@@ -56,11 +56,22 @@ async function ensureVenv() {
     console.error("[jenkins-mcp] Python venv exists, ensuring dependencies...");
   }
 
-  await run(
-    pythonPath,
-    ["-m", "pip", "install", "-r", "requirements.txt"],
-    PACKAGE_ROOT
-  );
+  const pipArgs = ["-m", "pip", "install", "-r", "requirements.txt"];
+
+  // Optional enterprise / proxy support
+  if (process.env.PIP_INDEX_URL) {
+    pipArgs.push("--index-url", process.env.PIP_INDEX_URL);
+  }
+
+  if (process.env.PIP_EXTRA_INDEX_URL) {
+    pipArgs.push("--extra-index-url", process.env.PIP_EXTRA_INDEX_URL);
+  }
+
+  if (process.env.PIP_TRUSTED_HOST) {
+    pipArgs.push("--trusted-host", process.env.PIP_TRUSTED_HOST);
+  }
+
+  await run(pythonPath, pipArgs, PACKAGE_ROOT);
 
   console.error("[jenkins-mcp] Python environment ready");
 }
