@@ -108,7 +108,7 @@ Stop a running Jenkins build.
 
 ### trigger-multiple-builds
 
-**NEW in v2.0!** Trigger builds for multiple jobs at once (batch operation).
+**new in v1.1.0!** Trigger builds for multiple jobs at once (batch operation).
 
 **Parameters:**
 
@@ -1155,7 +1155,7 @@ The node is healthy and processing builds.
 
 ### health-check
 
-**NEW in v2.0!** Run diagnostics on Jenkins connection.
+**new in v1.1.0!** Run diagnostics on Jenkins connection.
 
 **Parameters:**
 
@@ -1221,7 +1221,7 @@ All errors are reported as failed health checks with detailed troubleshooting st
 
 ### get-cache-stats
 
-**NEW in v2.0!** Get cache statistics and information.
+**new in v1.1.0!** Get cache statistics and information.
 
 **Parameters:**
 
@@ -1292,7 +1292,7 @@ None (always returns current state).
 
 ### clear-cache
 
-**NEW in v2.0!** Clear all cached data.
+**new in v1.1.0!** Clear all cached data.
 
 **Parameters:**
 
@@ -1331,7 +1331,7 @@ None (always succeeds).
 
 ### get-metrics
 
-**NEW in v2.0!** Get usage metrics and performance statistics.
+**new in v1.1.0!** Get usage metrics and performance statistics.
 
 **Parameters:**
 
@@ -1415,7 +1415,7 @@ None (always returns current metrics).
 
 ### configure-webhook
 
-**NEW in v2.0!** Configure webhook notifications for Jenkins events.
+**new in v1.1.0!** Configure webhook notifications for Jenkins events.
 
 **Parameters:**
 
@@ -1561,7 +1561,7 @@ Use metrics to identify bottlenecks:
 
 ## Version History
 
-### v2.0.0 (2024-12)
+### v1.1.0 (2024-12)
 - Added 6 new tools (26 total)
 - Enhanced existing tools with caching
 - Improved console output handling
@@ -1575,4 +1575,4 @@ Use metrics to identify bottlenecks:
 ---
 
 **Last Updated**: December 2024  
-**API Version**: 2.0.0
+**API Version**: 1.1.0

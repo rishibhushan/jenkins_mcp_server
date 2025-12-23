@@ -7,9 +7,15 @@ Designed to work seamlessly with automation clients such as:
 - 🖥️ **Claude Desktop** - AI-powered Jenkins automation
 - 🔌 **Any MCP-compatible client** - Universal compatibility
 
-## ✨ What's New in v1.1.0
+## ✨ What's New in v1.1.16
 
-### 🚀 Performance Enhancements
+### 🚀 Latest Improvements (v1.1.16)
+- ⚡ **Instant startup** - Server initialization in <1 second (previously 30-60s)
+- 🔧 **Simplified architecture** - Streamlined Node.js wrapper for better reliability
+- 🌐 **Universal compatibility** - Works seamlessly with VSCode, Claude Desktop, and all MCP clients
+- 🐛 **Critical fixes** - Resolved initialization timeouts and network blocking issues
+
+### 🚀 Performance Enhancements (v1.1.0)
 - ⚡ **10x faster** - Client connection caching for repeated operations
 - 📊 **Smart caching** - Job list caching with 30-60s TTL (5-10x improvement)
 - 🎯 **Optimized queries** - Reduced API calls by 33-83%
@@ -252,6 +258,15 @@ npx @rishibhushan/jenkins-mcp-server --env-file .env
 # OR if .env file is located in /path/to/.env
 npx @rishibhushan/jenkins-mcp-server --env-file /path/to/.env
 ```
+**NPX Usage:**
+- Always use `--yes` flag with npx for automatic package installation
+- First run may take 10-20 seconds to set up Python environment
+- Subsequent runs are instant (environment is cached)
+
+**Example:**
+````bash
+npx --yes @rishibhushan/jenkins-mcp-server --env-file .env
+````
 
 ### Option 2: Global Installation
 ```bash
@@ -267,11 +282,11 @@ jenkins-mcp-server --env-file .env
 npx github:rishibhushan/jenkins_mcp_server --env-file .env
 ```
 
----
-
 This automatically:
 - ✅ Installs all dependencies
 - ✅ Starts the Jenkins MCP server
+
+---
 
 ### Method 2: Direct Python Execution
 
@@ -307,11 +322,13 @@ Options:
 
 ---
 
-## 🔌 Integration Examples
+## 🔌 Integration with VSCode
 
-### VS Code MCP Client
+1. **Install VSCode MCP Extension** (if not already installed)
 
-Add to your VS Code `mcp.json`:
+2. **Configure the server** in your workspace or user settings:
+
+**Option A: Using `mcp.json` (Recommended)**
 
 ```json
 {
@@ -327,7 +344,9 @@ Add to your VS Code `mcp.json`:
 }
 ```
 
-Or `setting.json` with `.env` file and proxy settings:
+**Option B: Using settings.json**
+
+Add to your VSCode `settings.json`. With `.env` file, `--verbose`, and proxy settings:
 ```json
 {
   "mcp": {
@@ -339,7 +358,7 @@ Or `setting.json` with `.env` file and proxy settings:
           "@rishibhushan/jenkins-mcp-server",
           "--verbose",
           "--env-file",
-          "/path/to/.env"
+          "/absolute/path/to/your/.env"
         ],
         "env": {
           "HTTP_PROXY": "http://proxy.example.com:8080",
@@ -351,11 +370,36 @@ Or `setting.json` with `.env` file and proxy settings:
   }
 }
 ```
+**Important:**
+- Always use **absolute paths** for the `--env-file` parameter
+- Restart VSCode completely after configuration changes
+- Check Output → Model Context Protocol for connection status
 
-### Claude Desktop
+3. **Verify connection:**
+   - Open Command Palette (Cmd/Ctrl+Shift+P)
+   - Type "MCP" to see available commands
+   - Should see "Discovered 26 tools" in Output panel
+
+#### Troubleshooting VSCode Connection
+
+If VSCode shows "Waiting for initialize response":
+1. Ensure `.env` file path is **absolute**, not relative
+2. Verify `.env` file has correct Jenkins credentials
+3. Restart VSCode completely (quit and reopen)
+4. Check Output → Model Context Protocol for error messages
+5. Try running manually first: `npx --yes @rishibhushan/jenkins-mcp-server --env-file /path/to/.env`
+
+## 🤖 Integration with Claude Desktop
+
+1. **Locate Claude Desktop config:**
+   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+   - **Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+   
+2. **Add server configuration:**
 
 Add to `claude_desktop_config.json`:
-
 ```json
 {
   "mcpServers": {
@@ -364,19 +408,27 @@ Add to `claude_desktop_config.json`:
       "args": [
         "@rishibhushan/jenkins-mcp-server",
         "--env-file",
-        "/path/to/.env"
+        "/absolute/path/to/your/.env"
       ]
     }
   }
 }
 ```
 
-**Where to find claude_desktop_config.json:**
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Linux**: `~/.config/Claude/claude_desktop_config.json`
+3. **Restart Claude Desktop** completely
+
+4. **Verify:**
+   - You should see a 🔌 icon in Claude's input area
+   - Click it to see "jenkins" server with 26 tools
+
+#### Troubleshooting Claude Desktop
+Common issues:
+- **Server disconnects after 60s:** Make sure you're on VPN if Jenkins requires it
+- **No tools appear:** Check the config file path and restart Claude Desktop
+- **Connection timeout:** Verify Jenkins URL is accessible from your network
 
 ---
+
 
 ## 🏢 Corporate Network / Proxy Setup
 
@@ -498,6 +550,36 @@ if result['build_number']:
     )
     print(output)
 ```
+
+---
+
+## 🔍 Quick Troubleshooting
+
+### Server won't start
+```bash
+# Test if server works manually
+npx --yes @rishibhushan/jenkins-mcp-server --env-file /path/to/.env
+
+# Should start and wait for input (Ctrl+C to exit)
+```
+
+### VSCode/Claude Desktop can't connect
+- ✅ Use **absolute paths** for `--env-file`
+- ✅ Include `--yes` flag with npx
+- ✅ Restart application completely after config changes
+- ✅ Check if Jenkins is accessible (try in browser)
+- ✅ Verify `.env` file has correct credentials
+
+### Server connects but times out
+- ✅ Connect to VPN if Jenkins is on private network
+- ✅ Check firewall settings
+- ✅ Verify Jenkins URL is correct
+- ✅ Test with: `curl -I http://your-jenkins-url:8080`
+
+### "Module not found" errors
+- ✅ Delete `.venv` folder and let it reinstall
+- ✅ Clear npm cache: `npm cache clean --force`
+- ✅ Try with latest version: `npx --yes @rishibhushan/jenkins-mcp-server@latest`
 
 ---
 
@@ -1133,17 +1215,19 @@ jenkins-mcp-server --verbose
 ```
 jenkins_mcp_server/
 ├── bin/
-│   └── jenkins-mcp.js          # Node.js wrapper script
+│   └── jenkins-mcp.js          # Simplified Node.js wrapper (v1.1.16+)
 ├── src/
 │   └── jenkins_mcp_server/
 │       ├── __init__.py         # Package initialization & main()
 │       ├── __main__.py         # Entry point for python -m
 │       ├── config.py           # Configuration management
-│       ├── jenkins_client.py   # Jenkins API client
-│       └── server.py           # MCP server implementation
+│       ├── jenkins_client.py   # Jenkins API client (with caching)
+│       ├── cache.py            # Smart caching layer
+│       ├── metrics.py          # Performance telemetry
+│       └── server.py           # MCP server implementation (26 tools)
 ├── tests/                      # Test suite
 ├── requirements.txt            # Python dependencies
-├── package.json               # Node.js configuration
+├── package.json               # Node.js configuration (ES modules)
 └── README.md                  # This file
 ```
 

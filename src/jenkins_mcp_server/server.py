@@ -6,12 +6,14 @@ Provides MCP protocol handlers for Jenkins operations including:
 - Prompts (analysis templates)
 - Tools (Jenkins operations)
 """
+from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import sys
 import time
+from datetime import datetime
 from typing import Optional
 
 import mcp.server.stdio
@@ -24,6 +26,7 @@ from .cache import get_cache_manager
 from .config import JenkinsSettings, get_default_settings
 from .jenkins_client import get_jenkins_client
 from .metrics import get_metrics_collector, record_tool_execution
+from .verbose import vprint, _VERBOSE
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -458,7 +461,7 @@ async def _tool_trigger_multiple_builds(client, args):
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     """List available tools for interacting with Jenkins"""
-    print("=== list_tools CALLED ===", file=sys.stderr, flush=True)
+    vprint("=== list_tools CALLED ===")
     tools = [
         # Build Operations
         types.Tool(
@@ -1902,42 +1905,85 @@ async def main():
     """Run the Jenkins MCP server"""
     try:
         # Add explicit stderr debug
-        print("=== main() entered ===", file=sys.stderr, flush=True)
+        vprint("=== main() entered ===")
 
         # Verify settings are configured
         settings = get_settings()
-        print(f"=== Settings verified: {settings.is_configured} ===", file=sys.stderr, flush=True)
+        vprint(f"=== Settings verified: {settings.is_configured} ===")
 
         if not settings.is_configured:
             logger.error("Jenkins settings not configured!")
             sys.exit(1)
 
-        print(f"=== About to log startup message ===", file=sys.stderr, flush=True)
-        logger.info(f"Starting Jenkins MCP Server v1.0.0")
+        vprint(f"=== About to log startup message ===")
+        logger.info(f"Starting Jenkins MCP Server v1.1.16")
         logger.info(f"Connected to: {settings.url}")
-        print(f"=== Startup messages logged ===", file=sys.stderr, flush=True)
+        vprint(f"=== Startup messages logged ===")
 
         # Run the server using stdin/stdout streams
-        print("=== About to create stdio_server ===", file=sys.stderr, flush=True)
+        vprint("=== About to create stdio_server ===")
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-            print("=== stdio_server created ===", file=sys.stderr, flush=True)
-            print("=== About to call server.run() ===", file=sys.stderr, flush=True)
+            vprint("=== stdio_server created ===")
+            vprint("=== About to call server.run() ===")
+
+            now_local = datetime.now().astimezone()
+            formatted_date = now_local.strftime("%a %b %d %H:%M:%S %Z %Y")
+
+            print(f"\n------ JENKINS MCP SERVER STARTUP ------")
+            print(f"MCP Server started successfully on {formatted_date}")
+            print(f"Press Ctrl+C to stop the server")
+            print(f"----------------------------------------")
+            if _VERBOSE:
+                vprint(f"Jenkins MCP Server v1.1.16")
+                vprint(f"Connected to: {settings.url}")
 
             await server.run(
                 read_stream,
                 write_stream,
                 InitializationOptions(
                     server_name="jenkins-mcp-server",
-                    server_version="1.0.0",
+                    server_version="1.1.16",
                     capabilities=server.get_capabilities(
                         notification_options=NotificationOptions(),
                         experimental_capabilities={},
                     ),
                 ),
             )
-            print("=== server.run() completed ===", file=sys.stderr, flush=True)
+            vprint("=== server.run() completed ===")
     except KeyboardInterrupt:
-        logger.info("Server stopped by user")
-    except Exception as e:
-        logger.error(f"Server error: {e}", exc_info=True)
-        sys.exit(1)
+        vprint("=== Received interrupt signal ===")
+        if not _VERBOSE:
+            logger.info("Server stopped")
+
+    except BaseException as e:
+        # Catch BaseExceptionGroup (Python 3.11+) and regular exceptions
+        if type(e).__name__ == 'ExceptionGroup' or type(e).__name__ == 'BaseExceptionGroup':
+            # Handle exception group
+            vprint("=== Handling exception group ===")
+            exceptions = getattr(e, 'exceptions', [e])
+
+            # Check if all exceptions are OSError with errno 5 (expected on Ctrl+C)
+            all_io_errors = all(
+                isinstance(exc, OSError) and getattr(exc, 'errno', None) == 5
+                for exc in exceptions
+            )
+
+            if all_io_errors:
+                vprint("=== I/O error (stdin closed) ===")
+                if not _VERBOSE:
+                    logger.info("Server stopped")
+                # Clean exit - don't re-raise
+            else:
+                # Some other error
+                for exc in exceptions:
+                    logger.error(f"Server error: {exc}", exc_info=True)
+                sys.exit(1)
+        elif isinstance(e, (OSError, IOError)) and getattr(e, 'errno', None) == 5:
+            # Regular OSError with errno 5
+            vprint("=== I/O error (stdin closed) ===")
+            if not _VERBOSE:
+                logger.info("Server stopped")
+        else:
+            # Some other error - re-raise
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            raise

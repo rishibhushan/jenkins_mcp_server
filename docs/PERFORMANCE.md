@@ -17,9 +17,9 @@ Complete guide for optimizing Jenkins MCP Server performance across different ne
 
 ## Performance Overview
 
-### v2.0 Performance Improvements
+### v1.1.0 Performance Improvements
 
-| Metric | v1.0 | v2.0 | Improvement |
+| Metric | v1.0 | v1.1.0 | Improvement |
 |--------|------|------|-------------|
 | Tool execution (cached) | 200ms | 20ms | **10x faster** |
 | Job list query (cached) | 2500ms | 300ms | **8x faster** |
@@ -889,4 +889,4 @@ JENKINS_CONNECT_TIMEOUT=10
 ---
 
 **Last Updated**: December 2024  
-**Version**: 2.0.0
+**Version**: 1.1.0

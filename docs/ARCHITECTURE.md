@@ -168,7 +168,7 @@ class JenkinsSettings(BaseSettings):
     token: str
     password: str
     
-    # Performance settings (v2.0)
+    # Performance settings (v1.1.0)
     timeout: int = 30
     connect_timeout: int = 10
     read_timeout: int = 30
@@ -405,7 +405,7 @@ async def _tool_get_queue_info(client, args)
 async def _tool_list_nodes(client, args)
 async def _tool_get_node_info(client, args)
 
-# Monitoring & Management (5) - NEW in v2.0
+# Monitoring & Management (5) - NEW in v1.1.0
 async def _tool_health_check(client, args)
 async def _tool_get_cache_stats(client, args)
 async def _tool_clear_cache(client, args)
@@ -484,7 +484,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="jenkins-mcp-server",
-                server_version="2.0.0",
+                server_version="1.1.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={}
@@ -1108,7 +1108,7 @@ async def test_cache_performance():
 ```json
 {
   "name": "@rishibhushan/jenkins-mcp-server",
-  "version": "2.0.0",
+  "version": "1.1.0",
   "description": "AI-enabled Jenkins automation via MCP",
   "bin": {
     "jenkins-mcp-server": "./bin/jenkins-mcp.js"
@@ -1349,7 +1349,7 @@ Validation:
 - Invalid input detection: At API level
 ```
 
-### Optimized (v2.0)
+### Optimized (v1.1.0)
 
 ```
 Tool Execution:
@@ -1469,4 +1469,4 @@ Improvement: 5.6x throughput, 5.4x lower latency
 ---
 
 **Last Updated**: December 2024
-**Version**: 2.0.0
+**Version**: 1.1.0

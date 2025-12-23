@@ -18,9 +18,10 @@ from typing import Any, Dict, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .verbose import vprint
+
 # Configure logging
 logger = logging.getLogger(__name__)
-
 
 class JenkinsSettings(BaseSettings):
     """
@@ -275,25 +276,23 @@ def load_settings(
     Returns:
         JenkinsSettings instance with merged configuration
     """
-    import sys
-    print(f"=== config.load_settings called: env_file={env_file}, load_vscode={load_vscode} ===", file=sys.stderr,
-          flush=True)
+    vprint(f"=== config.load_settings called: env_file={env_file}, load_vscode={load_vscode} ===")
 
     # Start with environment variables and .env file
     if env_file:
-        print(f"=== Using custom env file: {env_file} ===", file=sys.stderr, flush=True)
+        vprint(f"=== Using custom env file: {env_file} ===")
         settings = JenkinsSettings(_env_file=env_file)
     else:
-        print("=== Using default .env ===", file=sys.stderr, flush=True)
+        vprint("=== Using default .env ===")
         settings = JenkinsSettings()
 
-    print(f"=== Initial settings: url={settings.url} ===", file=sys.stderr, flush=True)
+    vprint(f"=== Initial settings: url={settings.url} ===")
 
     # Override with VS Code settings if requested
     if load_vscode:
-        print("=== Loading VS Code settings ===", file=sys.stderr, flush=True)
+        vprint("=== Loading VS Code settings ===")
         vscode_settings = VSCodeSettingsLoader.load()
-        print(f"=== VS Code settings loaded: {vscode_settings is not None} ===", file=sys.stderr, flush=True)
+        vprint(f"=== VS Code settings loaded: {vscode_settings is not None} ===")
         if vscode_settings:
             # Merge VS Code settings into our settings object
             for key in ['url', 'username', 'password', 'token', 'timeout', 'connect_timeout',
@@ -303,14 +302,13 @@ def load_settings(
                     setattr(settings, key, vscode_value)
 
     # Apply direct overrides (highest priority)
-    print("=== Applying overrides ===", file=sys.stderr, flush=True)
+    vprint("=== Applying overrides ===")
     for key, value in override_values.items():
         if value is not None and hasattr(settings, key):
             setattr(settings, key, value)
 
     # Log final configuration
-    print(f"=== Final settings: url={settings.url}, configured={settings.is_configured} ===", file=sys.stderr,
-          flush=True)
+    vprint(f"=== Final settings: url={settings.url}, configured={settings.is_configured} ===")
     settings.log_config()
 
     return settings

@@ -1005,4 +1005,4 @@ docker exec jenkins-mcp-server \
 ---
 
 **Last Updated**: December 2024  
-**Version**: 2.0.0
+**Version**: 1.1.0
