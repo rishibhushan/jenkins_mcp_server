@@ -27,6 +27,7 @@ from .config import JenkinsSettings, get_default_settings
 from .jenkins_client import get_jenkins_client
 from .metrics import get_metrics_collector, record_tool_execution
 from .verbose import vprint, _VERBOSE
+from .version import __version__
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -1916,7 +1917,7 @@ async def main():
             sys.exit(1)
 
         vprint(f"=== About to log startup message ===")
-        logger.info(f"Starting Jenkins MCP Server v1.1.16")
+        logger.info(f"Starting Jenkins MCP Server v{__version__}")
         logger.info(f"Connected to: {settings.url}")
         vprint(f"=== Startup messages logged ===")
 
@@ -1934,7 +1935,7 @@ async def main():
             print(f"Press Ctrl+C to stop the server")
             print(f"----------------------------------------")
             if _VERBOSE:
-                vprint(f"Jenkins MCP Server v1.1.16")
+                vprint(f"Jenkins MCP Server v{__version__}")
                 vprint(f"Connected to: {settings.url}")
 
             await server.run(
@@ -1942,7 +1943,7 @@ async def main():
                 write_stream,
                 InitializationOptions(
                     server_name="jenkins-mcp-server",
-                    server_version="1.1.16",
+                    server_version=__version__,
                     capabilities=server.get_capabilities(
                         notification_options=NotificationOptions(),
                         experimental_capabilities={},

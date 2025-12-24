@@ -11,6 +11,7 @@ import sys
 
 from .config import get_settings, get_default_settings
 from .verbose import set_verbose, vprint
+from .version import __version__
 from . import server
 
 
@@ -83,7 +84,7 @@ Configuration Priority:
     parser.add_argument(
         '--version',
         action='version',
-        version='jenkins-mcp-server 1.1.16'
+        version=f'jenkins-mcp-server {__version__}'
     )
 
     parser.add_argument(
@@ -154,5 +155,4 @@ Configuration Priority:
 
 
 # Package metadata
-__version__ = "1.1.16"
-__all__ = ['main', 'server']
+__all__ = ['main', 'server', '__version__']
