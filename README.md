@@ -33,7 +33,6 @@ Designed to work seamlessly with automation clients such as:
 - 📊 **Console improvements** - Line-based truncation with tail mode
 - 🎨 **Structured logging** - Better debugging with JSON logs
 
----
 
 ## ✨ About codebase
 
@@ -46,7 +45,6 @@ Designed to work seamlessly with automation clients such as:
 - ✅ **Performance** - 10x faster with intelligent caching and optimization
 - ✅ **Reliability** - Comprehensive input validation and error handling
 
----
 
 ## 📦 Features
 
@@ -114,7 +112,6 @@ This project includes:
 
 For detailed technical documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
----
 
 ## 🚀 Quick Start
 
@@ -175,7 +172,6 @@ npm -v
 ```
 </details>
 
----
 
 ## ⚙️ Configuration
 
@@ -246,7 +242,6 @@ Settings are loaded in this order (later overrides earlier):
 5. Give it a name and click **Generate**
 6. Copy the token (⚠️ it won't be shown again!)
 
----
 
 ## 🚀 Installation/Running the Server
 
@@ -320,7 +315,67 @@ Options:
   --help, -h         Show help message
 ```
 
----
+## 🐳 Run with Docker (Standalone / CI / Headless environments)
+
+Docker support allows you to run the MCP server without installing Node
+or Python locally.
+
+### 📦 Build the image
+
+``` bash
+docker build -t jenkins-mcp-server .
+```
+
+
+
+### ▶️ Run the container
+
+``` bash
+docker run -it --rm \
+  -p 3000:3000 \
+  -e JENKINS_URL=http://your-jenkins:8080 \
+  -e JENKINS_USERNAME=your_username \
+  -e JENKINS_TOKEN=your_token \
+  jenkins-mcp-server
+```
+
+### 🔑 Required Environment Variables
+| Variable | Description |
+|---|---|
+|  JENKINS_URL  |  Jenkins base URL  |
+|  JENKINS_USERNAME  |  Jenkins username  |
+|  JENKINS_TOKEN  |  API token (recommended) |
+|  JENKINS_PASSWORD  |  Password (if not using token)  |
+
+### 🧠 When to use Docker
+
+Docker is recommended when running the MCP server:
+
+-   In CI/CD pipelines
+-   On Jenkins agents
+-   As a shared service
+-   Outside VS Code
+-   In production-like environments
+
+
+
+## ⚙️ Configuration Priority
+
+The server resolves configuration in this order:
+
+1️⃣ Environment variables\
+2️⃣ `.env` file\
+3️⃣ VS Code `settings.json`
+
+
+
+## 🧪 Verify Server is Running
+
+After starting, you should see logs indicating:
+
+-   Jenkins configuration loaded
+-   MCP server started
+-   Listening on port `3000`
 
 ## 🔌 Integration with VSCode
 
@@ -427,7 +482,6 @@ Common issues:
 - **No tools appear:** Check the config file path and restart Claude Desktop
 - **Connection timeout:** Verify Jenkins URL is accessible from your network
 
----
 
 
 ## 🏢 Corporate Network / Proxy Setup
@@ -495,7 +549,7 @@ export PIP_TRUSTED_HOST="pypi.org pypi.python.org files.pythonhosted.org"
 
 The Node.js wrapper automatically handles SSL certificate issues when it detects proxy environment variables.
 
----
+
 ## 💡 Usage Examples
 
 ### Natural Language Commands
@@ -551,7 +605,6 @@ if result['build_number']:
     print(output)
 ```
 
----
 
 ## 🔍 Quick Troubleshooting
 
@@ -581,7 +634,6 @@ npx --yes @rishibhushan/jenkins-mcp-server --env-file /path/to/.env
 - ✅ Clear npm cache: `npm cache clean --force`
 - ✅ Try with latest version: `npx --yes @rishibhushan/jenkins-mcp-server@latest`
 
----
 
 ## 🔧 Troubleshooting
 
@@ -1169,7 +1221,7 @@ Run with verbose flag to see detailed logs:
 jenkins-mcp-server --verbose
 ```
 
----
+
 
 ## 🧪 Development & Testing
 
@@ -1208,7 +1260,6 @@ pip install -e .
 jenkins-mcp-server --verbose
 ```
 
----
 
 ## 📚 Project Structure
 
@@ -1227,11 +1278,10 @@ jenkins_mcp_server/
 │       └── server.py           # MCP server implementation (26 tools)
 ├── tests/                      # Test suite
 ├── requirements.txt            # Python dependencies
-├── package.json               # Node.js configuration (ES modules)
-└── README.md                  # This file
+├── package.json                # Node.js configuration (ES modules)
+└── README.md                   # This file
 ```
 
----
 
 ## 🔒 Security Best Practices
 
@@ -1242,7 +1292,6 @@ jenkins_mcp_server/
 5. **Review permissions** - Only grant necessary Jenkins permissions
 6. **Keep dependencies updated** - Run `pip install --upgrade -r requirements.txt`
 
----
 
 ## 🤝 Contributing
 
@@ -1254,13 +1303,11 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
----
 
 ## 📝 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
----
 
 ## 🙏 Acknowledgments
 
@@ -1268,14 +1315,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Powered by [python-jenkins](https://python-jenkins.readthedocs.io/)
 - Inspired by the need for AI-powered DevOps automation
 
----
 
 ## 📞 Support
 
 - **Issues**: https://github.com/rishibhushan/jenkins_mcp_server/issues
 - **Discussions**: https://github.com/rishibhushan/jenkins_mcp_server/discussions
 
----
 
 ## 🗺️ Roadmap
 

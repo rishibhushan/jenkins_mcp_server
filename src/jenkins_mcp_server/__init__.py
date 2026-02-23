@@ -123,7 +123,8 @@ Configuration Priority:
             logger.error("  1. .env file (JENKINS_URL, JENKINS_USERNAME, JENKINS_TOKEN)")
             logger.error("  2. VS Code settings.json")
             logger.error("  3. Environment variables")
-            logger.error("\nFor help, run: %(prog)s --help" % {'prog': parser.prog})
+            # logger.error("\nFor help, run: %(prog)s --help" % {'prog': parser.prog})
+            logger.error("\nFor help, run: %(prog)s --help" % {'prog': "jenkins-mcp-server"})
             sys.exit(1)
 
         # Log configuration summary

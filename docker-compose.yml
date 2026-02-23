@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  jenkins-mcp:
+    build: .
+    container_name: jenkins-mcp
+    ports:
+      - "3000:3000"
+    environment:
+      - JENKINS_URL=${JENKINS_URL}
+      - JENKINS_USER=${JENKINS_USER}
+      - JENKINS_TOKEN=${JENKINS_TOKEN}

@@ -1,0 +1,10 @@
+.git
+node_modules
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+dist
+build
+.DS_Store
+__MACOSX
