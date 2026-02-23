@@ -325,15 +325,6 @@ Options:
 Docker support allows you to run the MCP server without installing Node
 or Python locally.
 
-### 📦 Build the image
-
-``` bash
-docker build -t jenkins-mcp-server .
-```
-
-
-
-
 ### ▶️ Run the container
 
 ``` bash
@@ -342,16 +333,18 @@ docker run -it --rm \
   -e JENKINS_URL=http://your-jenkins:8080 \
   -e JENKINS_USERNAME=your_username \
   -e JENKINS_TOKEN=your_token \
-  jenkins-mcp-server
+  ghcr.io/rishibhushan/jenkins-mcp-server:latest
 ```
 
 ### 📥 Pull Prebuilt Image (Recommended)
 
-Instead of building locally, you can pull the official image:
+Pull the official prebuilt image from GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/rishibhushan/jenkins-mcp-server:latest
 ```
+
+This ensures you always run the official published image and do not need the repository locally.
 
 ### 🔌 MCP Client Configuration (Docker)
 
@@ -359,21 +352,26 @@ Example configuration for MCP clients:
 
 ```json
 {
-  "jenkins": {
-    "command": "docker",
-    "args": [
-      "run",
-      "-i",
-      "--rm",
-      "-e",
-      "JENKINS_URL",
-      "-e",
-      "JENKINS_USERNAME",
-      "-e",
-      "JENKINS_TOKEN",
-      "ghcr.io/rishibhushan/jenkins-mcp-server:latest"
-    ]
-  }
+   "jenkins": {
+      "command": "docker",
+      "args": [
+         "run",
+         "-i",
+         "--rm",
+         "-e",
+         "JENKINS_URL",
+         "-e",
+         "JENKINS_USERNAME",
+         "-e",
+         "JENKINS_TOKEN",
+         "ghcr.io/rishibhushan/jenkins-mcp-server:latest"
+      ],
+      "env": {
+         "JENKINS_URL": "http://your-jenkins:8080",
+         "JENKINS_USERNAME": "your_username",
+         "JENKINS_TOKEN": "your_token"
+      }
+   }
 }
 ```
 
@@ -394,6 +392,100 @@ Docker is recommended when running the MCP server:
 -   As a shared service
 -   Outside VS Code
 -   In production-like environments
+
+
+### 🧰 Docker Troubleshooting
+
+If you run into issues while using the Docker image, try the steps below.
+
+#### ❌ Image pull fails
+```
+docker pull ghcr.io/rishibhushan/jenkins-mcp-server:latest
+```
+**Fix:**
+- Ensure Docker Desktop / Docker Engine is running
+- Check internet connectivity
+- If your org requires authentication, run:
+```
+docker login ghcr.io
+```
+
+#### ❌ Architecture error (e.g. “no matching manifest”)
+**Fix:**
+- Ensure you’re pulling the latest image:
+```
+docker pull ghcr.io/rishibhushan/jenkins-mcp-server:latest
+```
+- Remove any old local image and retry:
+```
+docker rmi ghcr.io/rishibhushan/jenkins-mcp-server:latest
+```
+
+#### ❌ Container starts but cannot connect to Jenkins
+**Fix:**
+- Verify Jenkins URL is reachable from your machine:
+```
+curl -I http://your-jenkins:8080
+```
+- If Jenkins is on your host machine, use:
+```
+http://host.docker.internal:8080
+```
+- Ensure VPN is connected if required
+
+#### ❌ Missing environment variables
+The server will not start if credentials are missing.
+
+Ensure these are provided:
+- `JENKINS_URL`
+- `JENKINS_USERNAME`
+- `JENKINS_TOKEN` (recommended)
+
+Example:
+```
+docker run -it --rm \
+  -e JENKINS_URL=http://your-jenkins:8080 \
+  -e JENKINS_USERNAME=user \
+  -e JENKINS_TOKEN=token \
+  ghcr.io/rishibhushan/jenkins-mcp-server:latest
+```
+
+#### ❌ Need logs for debugging
+Run container without `--rm` to inspect logs:
+
+```
+docker run -it \
+  -e JENKINS_URL=... \
+  -e JENKINS_USERNAME=... \
+  -e JENKINS_TOKEN=... \
+  ghcr.io/rishibhushan/jenkins-mcp-server:latest
+```
+
+Or view logs from another terminal:
+
+```
+docker ps
+docker logs <container_id>
+```
+
+#### ❌ Port already in use
+If you see a port conflict:
+
+```
+Bind for 0.0.0.0:3000 failed: port is already allocated
+```
+
+Run with a different port:
+```
+docker run -p 3001:3000 ...
+```
+
+---
+
+If problems persist, please open an issue with:
+- Your OS and Docker version
+- Full error message
+- Steps to reproduce
 
 
 
