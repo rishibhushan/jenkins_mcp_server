@@ -1,4 +1,9 @@
+
 # 🧠 Jenkins MCP Server
+
+![Build Status](https://img.shields.io/github/actions/workflow/status/rishibhushan/jenkins_mcp_server/docker-publish.yml?branch=main)
+![npm version](https://img.shields.io/npm/v/@rishibhushan/jenkins-mcp-server)
+![Docker](https://img.shields.io/badge/docker-ghcr.io%2Frishibhushan%2Fjenkins--mcp--server-blue)
 
 **Jenkins MCP Server** is an AI-enabled Model Context Protocol (MCP) server that exposes Jenkins automation through natural-language commands.
 
@@ -328,6 +333,7 @@ docker build -t jenkins-mcp-server .
 
 
 
+
 ### ▶️ Run the container
 
 ``` bash
@@ -337,6 +343,38 @@ docker run -it --rm \
   -e JENKINS_USERNAME=your_username \
   -e JENKINS_TOKEN=your_token \
   jenkins-mcp-server
+```
+
+### 📥 Pull Prebuilt Image (Recommended)
+
+Instead of building locally, you can pull the official image:
+
+```bash
+docker pull ghcr.io/rishibhushan/jenkins-mcp-server:latest
+```
+
+### 🔌 MCP Client Configuration (Docker)
+
+Example configuration for MCP clients:
+
+```json
+{
+  "jenkins": {
+    "command": "docker",
+    "args": [
+      "run",
+      "-i",
+      "--rm",
+      "-e",
+      "JENKINS_URL",
+      "-e",
+      "JENKINS_USERNAME",
+      "-e",
+      "JENKINS_TOKEN",
+      "ghcr.io/rishibhushan/jenkins-mcp-server:latest"
+    ]
+  }
+}
 ```
 
 ### 🔑 Required Environment Variables

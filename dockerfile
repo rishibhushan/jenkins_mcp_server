@@ -28,3 +28,6 @@ EXPOSE 3000
 
 # ---- Default command ----
 CMD ["python", "-m", "jenkins_mcp_server"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -m jenkins_mcp_server --help || exit 1
